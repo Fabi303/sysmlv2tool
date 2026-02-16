@@ -1,0 +1,6 @@
+{
+    "java.jdt.ls.vmargs": "-XX:+UseParallelGC -Xmx4G", // Try giving it more memory first
+    "java.autobuild.enabled": false,                  // Stop it from compiling in the background
+    "java.import.maven.enabled": false,              // Stop it from trying to parse your POMs
+    "java.import.gradle.enabled": false
+}
