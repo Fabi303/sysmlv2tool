@@ -55,6 +55,26 @@
     </plugins>
   </pluginManagement>
     <plugins>
+    <!-- Hopefully get rid of sensmetry: sysand-maven-plugin-->
+    <plugin>
+      <groupId>com.sensmetry</groupId>
+      <artifactId>sysand-maven-plugin</artifactId>
+      <version>0.0.6</version>
+      <executions>
+        <execution>
+          <id>build-kpar</id>
+          <phase/> 
+          <goals>
+            <goal>build-kpar</goal>
+          </goals>
+        </execution>
+        <execution>
+          <id>default</id>
+          <phase/>
+        </execution>
+      </executions>
+    </plugin>
+    <!-- plugin sysand-maven-plugin above is excluded because of compilation issues.-->
       <plugin>
         <groupId>org.eclipse.tycho</groupId>
         <artifactId>tycho-maven-plugin</artifactId>
@@ -101,4 +121,30 @@
       <!-- Add other plugins from the submodule here -->
     </plugins>
   </build>
+  <profiles>
+  <profile>
+    <id>kill-sysand</id>
+    <activation>
+      <activeByDefault>true</activeByDefault>
+    </activation>
+    <build>
+      <plugins>
+        <plugin>
+          <groupId>com.sensmetry</groupId>
+          <artifactId>sysand-maven-plugin</artifactId>
+          <executions>
+            <execution>
+              <id>default</id>
+              <phase>none</phase>
+            </execution>
+            <execution>
+              <id>build-kpar</id>
+              <phase>none</phase>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+    </build>
+  </profile>
+</profiles>
 </project>
