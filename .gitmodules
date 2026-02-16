@@ -1,0 +1,6 @@
+[submodule "src/submodules/SysML-v2-Pilot-Implementation"]
+	path = src/submodules/SysML-v2-Pilot-Implementation
+	url = https://github.com/Systems-Modeling/SysML-v2-Pilot-Implementation.git
+[submodule "src/submodules/SysML-v2-Release"]
+	path = src/submodules/SysML-v2-Release
+	url = https://github.com/Systems-Modeling/SysML-v2-Release.git
