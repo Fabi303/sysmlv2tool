@@ -22,6 +22,7 @@
   </dependencies>
     <modules>
         <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.target</module>
         <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.xtext</module>
         <module>submodules/SysML-v2-Pilot-Implementation/org.omg.kerml.xtext</module>
         <module>submodules/SysML-v2-Pilot-Implementation/org.omg.kerml.expressions.xtext</module>
@@ -32,6 +33,27 @@
         <module>sysmlv2-tool-assembly</module>
     </modules>
       <build>
+   <pluginManagement>
+    <plugins>
+      <plugin>
+      <!-- this plugin doesn't compile because of missing workspace.json file in the repository,
+           i dont need it and i dont want to mess around with the Pilot implementation source code,
+           so just exclude it.
+      -->
+        <groupId>com.sensmetry</groupId>
+        <artifactId>sysand-maven-plugin</artifactId>
+        <version>0.0.6</version>
+        <executions>
+          <execution>
+            <id>default</id> <phase>none</phase>
+          </execution>
+          <execution>
+            <id>build-kpar</id> <phase>none</phase>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </pluginManagement>
     <plugins>
       <plugin>
         <groupId>org.eclipse.tycho</groupId>
@@ -46,7 +68,7 @@
         <version>4.0.13</version>
         <configuration>
           <target>
-            <file>${project.basedir}/submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.target/org.omg.sysml.target.target</file>
+            <file>${maven.multiModuleProjectDirectory}/submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.target/org.omg.sysml.target.target</file>
           </target>
           <!--
             wrapAsBundle: wraps plain Maven JARs (picocli declared above)
