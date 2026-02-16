@@ -133,17 +133,34 @@ public class SysMLEngineHelper {
     private static Path autoDetectLibrary() {
         String env = System.getenv("SYSML_LIBRARY");
         if (env != null) { Path p = Path.of(env); if (Files.isDirectory(p)) return p; }
-        Path local = Path.of("sysml.library");
-        if (Files.isDirectory(local)) return local;
+
+        for (String rel : new String[]{
+            "./src/submodules/SysML-v2-Release/sysml.library",
+            "./submodules/SysML-v2-Release/sysml.library",
+            "../submodules/SysML-v2-Release/sysml.library",
+            "../../submodules/SysML-v2-Release/sysml.library",
+        }) {
+            Path p = Path.of(rel);
+            if (Files.isDirectory(p)) 
+            {
+                System.out.println("[INFO] Found library at: " + p);
+                return p;
+            }
+        }
+
         String home = System.getProperty("user.home");
         for (String rel : new String[]{
-            "git/SysML-v2-Pilot-Implementation/sysml.library",
-            "git/SysML-v2-Release/sysml.library",
-            "SysML-v2-Pilot-Implementation/sysml.library",
+            "../submodules/SysML-v2-Release/sysml.library",
+            "../../submodules/SysML-v2-Release/sysml.library",
         }) {
             Path p = Path.of(home, rel);
-            if (Files.isDirectory(p)) return p;
+            if (Files.isDirectory(p)) {
+                System.out.println("[INFO] Found library at: " + p);
+                return p;
+            }
         }
+
+        System.out.println("[WARN] Sysml library not found, please specify the directory using --libdir");
         return null;
     }
 }
