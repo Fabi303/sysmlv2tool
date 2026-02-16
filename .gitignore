@@ -1,0 +1,9 @@
+src/sysmlv2-tool/target/MANIFEST.MF
+src/sysmlv2-tool/target/sysmlv2-tool-1.0.0.jar
+src/sysmlv2-tool/target/classes/org/example/sysml/DiagramCommand.class
+src/sysmlv2-tool/target/classes/org/example/sysml/SysMLEngineHelper.class
+src/sysmlv2-tool/target/classes/org/example/sysml/SysMLEngineHelper$1.class
+src/sysmlv2-tool/target/classes/org/example/sysml/SysMLTool.class
+src/sysmlv2-tool/target/classes/org/example/sysml/ValidateCommand.class
+src/sysmlv2-tool/target/classes/org/example/sysml/ViewsCommand.class
+src/sysmlv2-tool/target/maven-archiver/pom.properties

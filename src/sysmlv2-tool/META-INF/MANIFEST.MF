@@ -1,0 +1,26 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-SymbolicName: sysmlv2-tool;singleton:=true
+Bundle-Version: 1.0.0.qualifier
+Bundle-Name: SysML v2 CLI Tool
+Bundle-RequiredExecutionEnvironment: JavaSE-21
+Bundle-ActivationPolicy: lazy
+Bundle-ClassPath: .,lib/picocli-4.7.5.jar
+Require-Bundle: org.omg.sysml,
+ org.omg.sysml.execution,
+ org.omg.sysml.interactive,
+ org.omg.sysml.plantuml,
+ org.omg.kerml.expressions.xtext,
+ org.omg.kerml.xtext,
+ org.omg.sysml.xtext,
+ org.eclipse.emf.ecore,
+ org.eclipse.emf.common,
+ org.eclipse.emf.ecore.xmi,
+ org.eclipse.xtext,
+ org.eclipse.xtext.util,
+ org.eclipse.uml2.common,
+ net.sourceforge.plantuml.lib
+
+
+
+

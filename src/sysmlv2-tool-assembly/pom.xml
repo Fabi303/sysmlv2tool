@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.example</groupId>
+  <artifactId>sysmlv2-tool-fatjar</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <dependencies>
+
+    <!-- ── Your tool ─────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>sysmlv2-tool</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+
+    <!-- ── SysML reactor artifacts (built by mvn package -pl ... -am) ── -->
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.sysml</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.sysml.execution</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.kerml.expressions.xtext</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.kerml.xtext</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.sysml.xtext</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.sysml.interactive</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.omg.sysml</groupId>
+      <artifactId>org.omg.sysml.plantuml</artifactId>
+      <version>0.56.0-SNAPSHOT</version>
+    </dependency>
+
+    <!-- ── Eclipse EMF ───────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.emf.ecore</artifactId>
+      <version>2.41.0.v20251025-0946</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.emf.common</artifactId>
+      <version>2.44.0.v20251025-0946</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.emf.ecore.xmi</artifactId>
+      <version>2.39.0.v20250910-1205</version>
+    </dependency>
+
+    <!-- ── Eclipse Xtext ─────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.xtext</artifactId>
+      <version>2.41.0.v20251124-0739</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.xtext.util</artifactId>
+      <version>2.41.0.v20251124-0739</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.xtext.common.types</artifactId>
+      <version>2.41.0.v20251124-0739</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.xtext.xbase</artifactId>
+      <version>2.41.0.v20251124-0739</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.xtext.xbase.lib</artifactId>
+      <version>2.41.0.v20251124-0739</version>
+    </dependency>
+
+    <!-- ── Eclipse Equinox / OSGi runtime ───────────────────────────── -->
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.equinox.common</artifactId>
+      <version>3.20.300.v20251111-0312</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.equinox.registry</artifactId>
+      <version>3.12.600.v20250906-0651</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.core.runtime</artifactId>
+      <version>3.34.100.v20251111-1421</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.osgi</artifactId>
+      <version>3.24.0.v20251126-0427</version>
+    </dependency>
+
+    <!-- ── UML2 ──────────────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.eclipse.uml2.common</artifactId>
+      <version>2.5.0.v20221116-1811</version>
+    </dependency>
+
+    <!-- ── Third-party ───────────────────────────────────────────────── -->
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>org.antlr.runtime</artifactId>
+      <version>3.2.0.v20230929-1400</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>com.google.inject</artifactId>
+      <version>7.0.0</version>
+    </dependency>
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>com.google.guava</artifactId>
+      <version>33.5.0.jre</version>
+    </dependency>
+
+    <!-- ── PlantUML (himi2 modified build) ───────────────────────────── -->
+    <dependency>
+      <groupId>p2.osgi.bundle</groupId>
+      <artifactId>net.sourceforge.plantuml.lib</artifactId>
+      <version>1.2022.7.himi2</version>
+    </dependency>
+
+    <!-- ── picocli (plain Maven JAR, already in local repo) ─────────── -->
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli</artifactId>
+      <version>4.7.5</version>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.2</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <finalName>sysmlv2-tool-fat</finalName>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>org.example.sysml.SysMLTool</mainClass>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                <!-- Merge Xtext/Eclipse language registration resources -->
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>META-INF/Xtext/languages.generated</resource>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>META-INF/Xtext/languages</resource>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>plugin.properties</resource>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>plugin.xml</resource>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>META-INF/eclipse.inf</resource>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                  <resource>META-INF/extensions</resource>
+                </transformer>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>module-info.class</exclude>
+                  </excludes>
+                </filter>
+                <!-- Preserve OSGi bundle resources -->
+                <filter>
+                  <artifact>org.eclipse.osgi:*</artifact>
+                  <excludes></excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

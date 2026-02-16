@@ -1,0 +1,82 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>sysmlv2-root</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+      <!-- ══ PlantUML + CLI ════════════════════════════════════════════ -->
+  <dependencies>
+    <!-- 
+    Müsste unnötig sein, da sysmlv2 ihre eigene angepasste Version von PlantUML mitbringt, die in der target platform definiert ist.
+    <dependency>
+      <groupId>net.sourceforge.plantuml</groupId>
+      <artifactId>plantuml</artifactId>
+      <version>1.2024.3</version>
+    </dependency> -->
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli</artifactId>
+      <version>4.7.5</version>
+    </dependency> 
+  </dependencies>
+    <modules>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.xtext</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.kerml.xtext</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.kerml.expressions.xtext</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.execution</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.interactive</module>
+        <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.plantuml</module>
+        <module>sysmlv2-tool</module>
+        <module>sysmlv2-tool-assembly</module>
+    </modules>
+      <build>
+    <plugins>
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>tycho-maven-plugin</artifactId>
+        <version>4.0.13</version>
+        <extensions>true</extensions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.eclipse.tycho</groupId>
+        <artifactId>target-platform-configuration</artifactId>
+        <version>4.0.13</version>
+        <configuration>
+          <target>
+            <file>${project.basedir}/submodules/SysML-v2-Pilot-Implementation/org.omg.sysml.target/org.omg.sysml.target.target</file>
+          </target>
+          <!--
+            wrapAsBundle: wraps plain Maven JARs (picocli declared above)
+            as OSGi bundles and adds them to the target platform.
+            The generated BSN matches info.picocli's Automatic-Module-Name.
+          -->
+          <pomDependencies>wrapAsBundle</pomDependencies>
+          <environments>
+            <environment>
+              <os>win32</os><ws>win32</ws><arch>x86_64</arch>
+            </environment>
+            <environment>
+              <os>linux</os><ws>gtk</ws><arch>x86_64</arch>
+            </environment>
+            <environment>
+              <os>macosx</os><ws>cocoa</ws><arch>aarch64</arch>
+            </environment>
+          </environments>
+        </configuration>
+      </plugin>
+     <!-- <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>com.sensmetry.sysand-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <phase>none</phase>
+          </execution>
+        </executions>
+      </plugin> -->
+      <!-- Add other plugins from the submodule here -->
+    </plugins>
+  </build>
+</project>
