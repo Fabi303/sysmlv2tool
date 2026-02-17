@@ -40,17 +40,22 @@ into context and validated. This allows for cross file import dependencies.
 
 ## Diagram generation
 
- * Usage modes:
+### Usage modes:
  *   diagram <path>                         -- diagram the root element(s)
  *   diagram <path> --element MyPart        -- diagram a specific named element
  *   diagram <path> --all-elements          -- one diagram per top-level element
   
- * Select output file format:
+### Select output file format:
  *   diagram -f svg <path>                  -- Output in svg format
  *   diagram -f png <path>                  -- Output in png format
    
-by default, puml is generated (not extremely useful, because it contains sysmlv2 specific skins)
-png and svg is also supported and can be selected using "--format", "-f" after the diagram command.
+  by default, puml is generated (not extremely useful, because it contains sysmlv2 specific skins)
+  png and svg is also supported and can be selected using "--format", "-f" after the diagram command.
+
+### Render specific elements
+
+Specific elements can be rendered by supplying the "-e" "--element" parameter and the elements name.
+diagram --element  MyPartName               -- Render my part.
 
 
 # Todo
