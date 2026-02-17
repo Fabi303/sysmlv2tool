@@ -79,6 +79,9 @@ public class DiagramCommand implements Callable<Integer> {
     @Option(names = {"--nostdlib"}, description = "Skip processing standard library resources")
     private boolean skipStdlib;
 
+
+    private static final int MAX_PLANTUML_SIZE = 65536; // 64KB, PlantUML's practical limit
+
     public DiagramCommand(SysMLTool parent) {
         this.parent = parent;
     }
@@ -164,7 +167,11 @@ public class DiagramCommand implements Callable<Integer> {
         try {
             Files.createDirectories(outputDir);
         } catch (IOException e) {
-            System.err.printf("[ERROR] Cannot create %s: %s%n", outputDir, e);
+            if(Files.exists(outputDir)) {
+                System.err.printf("[ERROR] Cannot create '%s' %s%n, a file with the same name exists.", outputDir, e.getMessage());
+            } else {
+                System.err.printf("[ERROR] Cannot create %s: %s%n", outputDir, e.getMessage());
+            }
             return 2;
         }
 
@@ -179,7 +186,6 @@ public class DiagramCommand implements Callable<Integer> {
                     continue;
                 }
 
-                if (resource.getURI().toString().contains("sysml.library")) continue; // skip stdlib
                 if (!resource.getContents().isEmpty()) {
                     allRoots.add(resource.getContents().get(0));
 
@@ -294,12 +300,18 @@ public class DiagramCommand implements Callable<Integer> {
             System.out.printf("[WARN]  Empty output for '%s' — skipping.%n", name);
             return;
         }
+        if (puml.length() > MAX_PLANTUML_SIZE) {
+            System.out.printf("[WARN]  Diagram for '%s' is too large (%d chars) — skipping.%n", name, puml.length());
+            return;
+        }
+
         if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
 
         String safe = name.replaceAll("[^A-Za-z0-9_\\-]", "_");
         Path out = null;
         int suffix = 0;
 
+        // If the file already exists, append a numeric suffix to avoid overwriting
         while (true) {
                 String filename = suffix > 0 
                     ? safe + "_" + suffix + "." + fmt
@@ -310,19 +322,32 @@ public class DiagramCommand implements Callable<Integer> {
                 suffix++;
         }
 
+        //Should never happen due to suffix logic, but check just in case
+        if (Files.exists(out)) {
+            System.err.printf("[ERROR] File already exists and cannot be overwritten: %s%n", out);
+            return;
+        }
+
+        // Write to a temp file first, then move to final location to avoid partial files on error
+        Path tempFile = Files.createTempFile(outputDir, safe, ".tmp");
 
         if (fmt.equals("puml")) {
-            out = outputDir.resolve(safe + ".puml");
-            Files.writeString(out, puml, StandardCharsets.UTF_8);
+            Files.writeString(tempFile, puml, StandardCharsets.UTF_8);
             System.out.printf("  [OK]  %s%n", out);
         } else {
             FileFormat ff = fmt.equals("svg") ? FileFormat.SVG : FileFormat.PNG;
-            out = outputDir.resolve(safe + "." + fmt);
             try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
                 new SourceStringReader(puml).outputImage(baos, new FileFormatOption(ff));
-                Files.write(out, baos.toByteArray());
+                Files.write(tempFile, baos.toByteArray());
+            } catch (IOException e) {
+                System.err.printf("[ERROR] Failed to write diagram for '%s': %s%n", name, e.getMessage());
+                return;
             }
-            System.out.printf("  [OK]  %s%n", out);
+            finally {
+                Files.move(tempFile, out, StandardCopyOption.REPLACE_EXISTING);
+                Files.deleteIfExists(tempFile);
+                System.out.printf("  [OK]  %s%n", out);
+            }
         }
     }
 
@@ -415,7 +440,7 @@ public class DiagramCommand implements Callable<Integer> {
         try {
             Method getOwnedMember = root.getClass().getMethod("getOwnedMember");
             Object result = getOwnedMember.invoke(root);
-            if (result instanceof Iterable<?> it) {
+            if ((null != result) && (result instanceof Iterable<?> it)) {
                 for (Object obj : it) {
                     if (obj instanceof EObject eo) members.add(eo);
                 }
