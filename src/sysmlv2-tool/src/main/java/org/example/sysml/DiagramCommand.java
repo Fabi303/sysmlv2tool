@@ -28,6 +28,8 @@ import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.example.sysml.FileUtils.*;
+
 /**
  * Generates diagrams using SysML2PlantUMLText from the Pilot Implementation.
  *
@@ -73,6 +75,9 @@ public class DiagramCommand implements Callable<Integer> {
     @Option(names = {"--output", "-o"}, description = "Output directory (default: .)",
         paramLabel = "<dir>", defaultValue = ".")
     private Path outputDir;
+
+    @Option(names = {"--nostdlib"}, description = "Skip processing standard library resources")
+    private boolean skipStdlib;
 
     public DiagramCommand(SysMLTool parent) {
         this.parent = parent;
@@ -167,9 +172,17 @@ public class DiagramCommand implements Callable<Integer> {
             // Collect all root elements from loaded resources
             List<EObject> allRoots = new ArrayList<>();
             for (Resource resource : engine.getResourceSet().getResources()) {
+
+                //skip stdlib resources if --nostdlib is set
+                if (skipStdlib && isStandardLibraryResource(resource)) {
+                    System.out.printf("[INFO] Skipping standard library resource: %s%n", resource.getURI());
+                    continue;
+                }
+
                 if (resource.getURI().toString().contains("sysml.library")) continue; // skip stdlib
                 if (!resource.getContents().isEmpty()) {
                     allRoots.add(resource.getContents().get(0));
+
                 }
             }
 
@@ -197,6 +210,14 @@ public class DiagramCommand implements Callable<Integer> {
     }
 
     // ── Diagram generation strategies ────────────────────────────────────────
+
+    //Find any Resource that looks like a standard library
+    private boolean isStandardLibraryResource(Resource resource) {
+        String uriStr = resource.getURI().toString().toLowerCase();
+        return uriStr.contains("sysml.library") || 
+               uriStr.contains("/standard-library") || 
+               uriStr.contains("/library/");
+    }
 
     /**
      * Generate one diagram per root element (one per input file).
@@ -276,13 +297,27 @@ public class DiagramCommand implements Callable<Integer> {
         if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
 
         String safe = name.replaceAll("[^A-Za-z0-9_\\-]", "_");
+        Path out = null;
+        int suffix = 0;
+
+        while (true) {
+                String filename = suffix > 0 
+                    ? safe + "_" + suffix + "." + fmt
+                    : safe + "." + fmt;
+                
+                out = outputDir.resolve(filename);
+                if (Files.notExists(out)) break;
+                suffix++;
+        }
+
+
         if (fmt.equals("puml")) {
-            Path out = outputDir.resolve(safe + ".puml");
+            out = outputDir.resolve(safe + ".puml");
             Files.writeString(out, puml, StandardCharsets.UTF_8);
             System.out.printf("  [OK]  %s%n", out);
         } else {
             FileFormat ff = fmt.equals("svg") ? FileFormat.SVG : FileFormat.PNG;
-            Path out = outputDir.resolve(safe + "." + fmt);
+            out = outputDir.resolve(safe + "." + fmt);
             try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
                 new SourceStringReader(puml).outputImage(baos, new FileFormatOption(ff));
                 Files.write(out, baos.toByteArray());
@@ -358,24 +393,6 @@ public class DiagramCommand implements Callable<Integer> {
         throw new IllegalStateException("Cannot instantiate SysML2PlantUMLText");
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    /**
-     * Recursively collects all *.sysml files under a directory.
-     */
-    private List<Path> collectSysmlFiles(Path dir) {
-        try (Stream<Path> walk = Files.walk(dir)) {
-            return walk
-                .filter(p -> Files.isRegularFile(p)
-                          && p.getFileName().toString().endsWith(".sysml"))
-                .sorted(Comparator.comparingInt(Path::getNameCount)
-                                  .thenComparing(Comparator.naturalOrder()))
-                .collect(Collectors.toList());
-        } catch (IOException e) {
-            System.err.println("[ERROR] Failed to scan directory '" + dir + "': " + e.getMessage());
-            return List.of();
-        }
-    }
 
     private EObject findByName(EObject root, String name) {
         if (name.equals(getEObjectName(root))) return root;
