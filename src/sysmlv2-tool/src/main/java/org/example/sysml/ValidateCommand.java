@@ -1,35 +1,52 @@
 package org.example.sysml;
 
 import org.eclipse.emf.ecore.EObject;
-import org.eclipse.emf.ecore.resource.Resource;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
- * Validates SysML v2 files using the Pilot Implementation's native API:
- *   1. engine.validate(file) reads source, calls process(String) then validate()
- *      and returns a ValidationResult carrying both the issue list and any
- *      parse-level errors from process().
+ * Validates SysML v2 files using the Pilot Implementation's native API.
  *
- * Exit codes: 0 = no errors, -1 = file not found or any errors present.
+ * Accepts one or more files or directories on the command line:
+ *
+ *   - Files are validated individually (existing behaviour).
+ *   - Directories are scanned recursively for all *.sysml files, which are
+ *     then validated together in a single batch so that cross-file imports
+ *     resolve correctly. Results are still printed per-file.
+ *
+ * When a mix of files and directories is given, each directory argument is
+ * expanded into its contained files and appended to the file list; all
+ * resulting files are validated together as one batch.
+ *
+ * Exit codes: 0 = no errors, -1 = any file not found or errors present.
  */
 @Command(
     name = "validate",
     mixinStandardHelpOptions = true,
-    description = "Validate SysML v2 file(s) and report diagnostics"
+    description = "Validate SysML v2 file(s) or directory (recursive) and report diagnostics"
 )
 public class ValidateCommand implements Callable<Integer> {
 
     private final SysMLTool parent;
 
-    @Parameters(paramLabel = "<file>", description = "One or more .sysml files", arity = "1..*")
-    private List<Path> files;
+    @Parameters(
+        paramLabel = "<path>",
+        description = "One or more .sysml files or directories to scan recursively",
+        arity = "1..*"
+    )
+    private List<Path> inputs;
 
     @Option(names = {"--verbose", "-v"}, description = "Print the full element tree on success")
     private boolean verbose;
@@ -40,32 +57,61 @@ public class ValidateCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
-        int totalErrors = 0;
+        // Expand each input into an ordered list of .sysml files.
+        List<Path> files = new ArrayList<>();
+        int totalErrors  = 0;
 
-        for (Path file : files) {
-            System.out.printf("%n%s%n  Validating: %s%n%s%n",
-                "-".repeat(60), file, "-".repeat(60));
-
-            if (!Files.exists(file)) {
-                System.err.printf("  [x]  File not found: %s%n", file);
+        for (Path input : inputs) {
+            if (!Files.exists(input)) {
+                System.err.printf("  [x]  Path not found: %s%n", input);
                 totalErrors++;
                 continue;
             }
+            if (Files.isDirectory(input)) {
+                List<Path> found = collectSysmlFiles(input);
+                if (found.isEmpty()) {
+                    System.err.printf("  [!]  No .sysml files found under: %s%n", input);
+                } else {
+                    System.out.printf("[INFO]  Found %d .sysml file(s) under: %s%n",
+                        found.size(), input);
+                    files.addAll(found);
+                }
+            } else {
+                files.add(input);
+            }
+        }
 
-            SysMLEngineHelper.ValidationResult result = engine.validate(file);
+        if (files.isEmpty()) {
+            return totalErrors > 0 ? -1 : 0;
+        }
+
+        SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
+
+        // Route: single file → simple validate(); multiple files → validateAll().
+        Map<Path, SysMLEngineHelper.ValidationResult> results;
+        if (files.size() == 1) {
+            Path file = files.get(0);
+            results = Map.of(file, engine.validate(file));
+        } else {
+            results = engine.validateAll(files);
+        }
+
+        for (Map.Entry<Path, SysMLEngineHelper.ValidationResult> entry : results.entrySet()) {
+            Path file = entry.getKey();
+            SysMLEngineHelper.ValidationResult result = entry.getValue();
+
+            System.out.printf("%n%s%n  Validating: %s%n%s%n",
+                "-".repeat(60), file, "-".repeat(60));
 
             long errorCount   = 0;
             long warningCount = 0;
 
-            // Print parse-level errors/warnings from process() and count them.
             for (SysMLEngineHelper.ParseError pe : result.parseErrors()) {
                 System.out.printf("  %s  [parse] %s%n", pe.isError() ? "[x]" : "[!]", pe.message());
                 if (pe.isError()) errorCount++;
                 else              warningCount++;
             }
 
-            // Print validator issues from validate() and count them.
             for (Object issue : result.issues()) {
                 boolean isError = SysMLEngineHelper.isErrorSeverity(issue);
                 if (isError) errorCount++;
@@ -96,9 +142,24 @@ public class ValidateCommand implements Callable<Integer> {
     }
 
     /**
-     * Extracts a human-readable message from an issue object, including location
-     * information (line/column) when available.
+     * Recursively collects all *.sysml files under {@code dir}, sorted by path
+     * so that files in parent directories are processed before subdirectories
+     * (a reasonable heuristic for dependency ordering).
      */
+    private List<Path> collectSysmlFiles(Path dir) {
+        try (Stream<Path> walk = Files.walk(dir)) {
+            return walk
+                .filter(p -> Files.isRegularFile(p)
+                          && p.getFileName().toString().endsWith(".sysml"))
+                .sorted(Comparator.comparingInt(Path::getNameCount)
+                                  .thenComparing(Comparator.naturalOrder()))
+                .collect(Collectors.toList());
+        } catch (IOException e) {
+            System.err.println("[ERROR] Failed to scan directory '" + dir + "': " + e.getMessage());
+            return List.of();
+        }
+    }
+
     private String getMessage(Object issue) {
         String text = null;
         try {
@@ -108,8 +169,6 @@ public class ValidateCommand implements Callable<Integer> {
 
         if (text == null) text = issue.toString();
 
-        // Attach line/column if available. Xtext Issue uses getLineNumber();
-        // EMF Resource.Diagnostic uses getLine().
         for (String lineMethod : new String[]{"getLineNumber", "getLine"}) {
             try {
                 Object line = issue.getClass().getMethod(lineMethod).invoke(issue);
