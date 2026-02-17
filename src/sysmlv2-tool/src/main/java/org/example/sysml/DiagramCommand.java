@@ -73,55 +73,55 @@ public class DiagramCommand implements Callable<Integer> {
         System.out.printf("%n%s%n  Generating PlantUML: %s%n%s%n",
             "─".repeat(60), sysmlFile, "─".repeat(60));
 
-        try {
-            engine.process(sysmlFile);
-            long errorCount = engine.validate().stream()
-                .filter(i -> {
-                    try {
-                        Object s = i.getClass().getMethod("getSeverity").invoke(i);
-                        return s != null && s.toString().toUpperCase().contains("ERROR");
-                    } catch (Exception ex) {
-                        return true;
-                    }
-                })
-                .count();
-            if (errorCount > 0) {
-                System.err.printf("[ERROR] %d validation error(s) — fix before generating diagrams.%n", errorCount);
-                return 1;
-            }
-        } catch (Exception e) {
-            System.err.printf("[ERROR] Parse failed: %s%n", e.getMessage());
-            return 2;
-        }
+        // try {
+        //     engine.process(sysmlFile);
+        //     long errorCount = engine.validate().stream()
+        //         .filter(i -> {
+        //             try {
+        //                 Object s = i.getClass().getMethod("getSeverity").invoke(i);
+        //                 return s != null && s.toString().toUpperCase().contains("ERROR");
+        //             } catch (Exception ex) {
+        //                 return true;
+        //             }
+        //         })
+        //         .count();
+        //     if (errorCount > 0) {
+        //         System.err.printf("[ERROR] %d validation error(s) — fix before generating diagrams.%n", errorCount);
+        //         return 1;
+        //     }
+        // } catch (Exception e) {
+        //     System.err.printf("[ERROR] Parse failed: %s%n", e.getMessage());
+        //     return 2;
+        // }
 
-        EObject root = engine.getRootElement();
-        if (root == null) {
-            System.err.println("[ERROR] No root element — is the file empty?");
-            return 1;
-        }
+        // EObject root = engine.getRootElement();
+        // if (root == null) {
+        //     System.err.println("[ERROR] No root element — is the file empty?");
+        //     return 1;
+        // }
 
-        try {
-            Files.createDirectories(outputDir);
-        } catch (IOException e) {
-            System.err.printf("[ERROR] Cannot create %s: %s%n", outputDir, e);
-            return 2;
-        }
+        // try {
+        //     Files.createDirectories(outputDir);
+        // } catch (IOException e) {
+        //     System.err.printf("[ERROR] Cannot create %s: %s%n", outputDir, e);
+        //     return 2;
+        // }
 
-        try {
-            String puml = generatePlantUML(root);
-            if (puml == null || puml.isBlank()) {
-                System.out.println("[WARN] Empty output — skipping.");
-                return 1;
-            }
-            if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
+        // try {
+        //     String puml = generatePlantUML(root);
+        //     if (puml == null || puml.isBlank()) {
+        //         System.out.println("[WARN] Empty output — skipping.");
+        //         return 1;
+        //     }
+        //     if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
 
-            Path out = outputDir.resolve(sysmlFile.getFileName().toString().replace(".sysml", ".puml"));
-            Files.writeString(out, puml, StandardCharsets.UTF_8);
-            System.out.printf("[OK] Generated: %s%n", out);
-        } catch (Exception e) {
-            System.err.printf("[ERROR] Failed to generate PlantUML: %s%n", e.getMessage());
-            return 1;
-        }
+        //     Path out = outputDir.resolve(sysmlFile.getFileName().toString().replace(".sysml", ".puml"));
+        //     Files.writeString(out, puml, StandardCharsets.UTF_8);
+        //     System.out.printf("[OK] Generated: %s%n", out);
+        // } catch (Exception e) {
+        //     System.err.printf("[ERROR] Failed to generate PlantUML: %s%n", e.getMessage());
+        //     return 1;
+        // }
 
         return 0;
     }

@@ -1,7 +1,7 @@
 package org.example.sysml;
 
 import org.eclipse.emf.ecore.EObject;
-import org.omg.sysml.interactive.SysMLInteractiveResult;
+import org.eclipse.emf.ecore.resource.Resource;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -13,18 +13,19 @@ import java.util.concurrent.Callable;
 
 /**
  * Validates SysML v2 files using the Pilot Implementation's native API:
- *   1. sysml.process(source)  — parse + link the model
- *   2. sysml.validate()       — run validation, return List of issues
+ *   1. engine.validate(file) reads source, calls process(String) then validate()
+ *      and returns a ValidationResult carrying both the issue list and any
+ *      parse-level errors from process().
  *
- * Exit codes: 0 = correct validation, -1 = file not found or validation errors
+ * Exit codes: 0 = no errors, -1 = file not found or any errors present.
  */
 @Command(
     name = "validate",
     mixinStandardHelpOptions = true,
     description = "Validate SysML v2 file(s) and report diagnostics"
 )
-
 public class ValidateCommand implements Callable<Integer> {
+
     private final SysMLTool parent;
 
     @Parameters(paramLabel = "<file>", description = "One or more .sysml files", arity = "1..*")
@@ -44,52 +45,42 @@ public class ValidateCommand implements Callable<Integer> {
 
         for (Path file : files) {
             System.out.printf("%n%s%n  Validating: %s%n%s%n",
-                "─".repeat(60), file, "─".repeat(60));
+                "-".repeat(60), file, "-".repeat(60));
 
-            // Check if file exists
             if (!Files.exists(file)) {
-                System.err.printf("  ❌  File not found: %s%n", file);
+                System.err.printf("  [x]  File not found: %s%n", file);
                 totalErrors++;
                 continue;
             }
 
-            boolean hasParseErrors = false;
-            // Step 1: parse + link
-            try {
-                SysMLInteractiveResult result = engine.process(file);
-                // SysMLInteractiveResult may itself carry parse errors
-                hasParseErrors = printResultIssues(result, file.getFileName().toString());
-                if (hasParseErrors) totalErrors++;
-            } catch (Exception e) {
-                System.err.printf("  ❌  Parse failed: %s%n", e.getMessage());
-                totalErrors++;
-                continue;
-            }
-
-            // Step 2: validate — this is the authoritative issue list
-            List<?> issues = engine.validate();
+            SysMLEngineHelper.ValidationResult result = engine.validate(file);
 
             long errorCount   = 0;
             long warningCount = 0;
 
-            for (Object issue : issues) {
-                String msg      = getMessage(issue);
-                boolean isError = isError(issue);
-                if (isError) errorCount++;
-                else          warningCount++;
-                System.out.printf("  %s  %s%n", isError ? "❌" : "⚠️ ", msg);
+            // Print parse-level errors/warnings from process() and count them.
+            for (SysMLEngineHelper.ParseError pe : result.parseErrors()) {
+                System.out.printf("  %s  [parse] %s%n", pe.isError() ? "[x]" : "[!]", pe.message());
+                if (pe.isError()) errorCount++;
+                else              warningCount++;
             }
 
-            if (hasParseErrors || errorCount > 0) {
-                if (errorCount > 0) {
-                    System.out.printf("%n  ❌  FAILED: %d error(s), %d warning(s)%n",
-                        errorCount, warningCount);
-                }
+            // Print validator issues from validate() and count them.
+            for (Object issue : result.issues()) {
+                boolean isError = SysMLEngineHelper.isErrorSeverity(issue);
+                if (isError) errorCount++;
+                else          warningCount++;
+                System.out.printf("  %s  %s%n", isError ? "[x]" : "[!]", getMessage(issue));
+            }
+
+            if (errorCount > 0) {
+                System.out.printf("%n  [x]  FAILED: %d error(s), %d warning(s)%n",
+                    errorCount, warningCount);
                 totalErrors++;
             } else {
                 if (warningCount > 0)
-                    System.out.printf("  ⚠️   %d warning(s)%n", warningCount);
-                System.out.println("  ✅  OK — no errors.");
+                    System.out.printf("  [!]  %d warning(s)%n", warningCount);
+                System.out.println("  [ok] OK - no errors.");
 
                 if (verbose) {
                     EObject root = engine.getRootElement();
@@ -105,80 +96,36 @@ public class ValidateCommand implements Callable<Integer> {
     }
 
     /**
-     * SysMLInteractiveResult may carry its own error string from process().
-     * Print it if non-empty and not the known spurious linking noise.
-     * Replace generic resource names (like "1.sysml") with the actual filename.
-     * Returns true if error-level issues were found.
+     * Extracts a human-readable message from an issue object, including location
+     * information (line/column) when available.
      */
-    private boolean printResultIssues(SysMLInteractiveResult result, String filename) {
-        boolean hasErrors = false;
-        if (result == null) return false;
-        // Try to get the string representation — in 0.56.x toString() shows errors
-        String s = result.toString();
-        if (s == null || s.isBlank() || s.equals("null")) return false;
-        for (String line : s.split("\\r?\\n")) {
-            if (line.isBlank()) continue;
-            if (line.contains("Couldn't resolve reference to Element")) continue;
-            // Replace generic resource names (e.g., "(1.sysml ", "(2.sysml ", etc.)
-            for (int i = 0; i < 100; i++) {
-                String pattern = "(" + i + ".sysml ";
-                if (line.contains(pattern)) {
-                    line = line.replace(pattern, "(" + filename + " ");
-                    break;  // Found and replaced, stop checking other numbers
-                }
-            }
-            String low = line.toLowerCase();
-            if (low.contains("error") || low.contains("warning")) {
-                String icon = low.contains("error") ? "❌" : "⚠️ ";
-                System.out.printf("  %s  [parse] %s%n", icon, line.trim());
-                if (low.contains("error")) hasErrors = true;
-            }
-        }
-        return hasErrors;
-    }
-
-    private boolean isError(Object issue) {
-        // Try getSeverity() — Xtext Issue has this
-        try {
-            Object sev = issue.getClass().getMethod("getSeverity").invoke(issue);
-            if (sev != null) return sev.toString().toUpperCase().contains("ERROR");
-        } catch (Exception ignored) {}
-        // EMF Resource.Diagnostic has no severity — all are errors
-        try {
-            issue.getClass().getMethod("getLine");
-            return true;
-        } catch (Exception ignored) {}
-        return issue.toString().toLowerCase().contains("error");
-    }
-
     private String getMessage(Object issue) {
-        for (String m : new String[]{"getMessage", "toString"}) {
+        String text = null;
+        try {
+            Object v = issue.getClass().getMethod("getMessage").invoke(issue);
+            if (v != null) text = v.toString();
+        } catch (Exception ignored) {}
+
+        if (text == null) text = issue.toString();
+
+        // Attach line/column if available. Xtext Issue uses getLineNumber();
+        // EMF Resource.Diagnostic uses getLine().
+        for (String lineMethod : new String[]{"getLineNumber", "getLine"}) {
             try {
-                Object v = issue.getClass().getMethod(m).invoke(issue);
-                if (v != null) {
-                    // Try to include line number
-                    try {
-                        Object line = issue.getClass().getMethod("getLineNumber").invoke(issue);
-                        Object col  = issue.getClass().getMethod("getColumn").invoke(issue);
-                        return String.format("line %s col %s — %s", line, col, v);
-                    } catch (Exception ignored) {}
-                    try {
-                        Object line = issue.getClass().getMethod("getLine").invoke(issue);
-                        Object col  = issue.getClass().getMethod("getColumn").invoke(issue);
-                        return String.format("line %s col %s — %s", line, col, v);
-                    } catch (Exception ignored) {}
-                    return v.toString();
-                }
+                Object line = issue.getClass().getMethod(lineMethod).invoke(issue);
+                Object col  = issue.getClass().getMethod("getColumn").invoke(issue);
+                return String.format("line %s col %s - %s", line, col, text);
             } catch (Exception ignored) {}
         }
-        return issue.toString();
+
+        return text;
     }
 
     private void printTree(EObject obj, int indent) {
         String pad  = " ".repeat(indent);
         String type = obj.eClass().getName();
         String name = DiagramCommand.getEObjectName(obj);
-        System.out.printf("%s• [%s] %s%n", pad, type, name);
+        System.out.printf("%s* [%s] %s%n", pad, type, name);
         for (EObject child : obj.eContents()) printTree(child, indent + 2);
     }
 }

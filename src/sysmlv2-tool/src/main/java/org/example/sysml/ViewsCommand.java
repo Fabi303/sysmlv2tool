@@ -62,94 +62,96 @@ public class ViewsCommand implements Callable<Integer> {
         System.out.printf("%n%s%n  Views in: %s%n%s%n",
             "─".repeat(60), sysmlFile, "─".repeat(60));
 
-        try {
-            engine.process(sysmlFile);
-            long errorCount = engine.validate().stream()
-                .filter(i -> { try { Object s = i.getClass().getMethod("getSeverity").invoke(i);
-                    return s != null && s.toString().toUpperCase().contains("ERROR"); }
-                    catch (Exception ex) { return true; } })
-                .count();
-            if (errorCount > 0) {
-                System.err.printf("[ERROR] %d validation error(s) — fix before rendering views.%n", errorCount);
-                return 1;
-            }
-        } catch (Exception e) {
-            System.err.printf("[ERROR] Parse failed: %s%n", e.getMessage());
-            return 2;
-        }
+        // try {
+        //     engine.process(sysmlFile);
+        //     long errorCount = engine.validate().stream()
+        //         .filter(i -> { try { Object s = i.getClass().getMethod("getSeverity").invoke(i);
+        //             return s != null && s.toString().toUpperCase().contains("ERROR"); }
+        //             catch (Exception ex) { return true; } })
+        //         .count();
+        //     if (errorCount > 0) {
+        //         System.err.printf("[ERROR] %d validation error(s) — fix before rendering views.%n", errorCount);
+        //         return 1;
+        //     }
+        // } catch (Exception e) {
+        //     System.err.printf("[ERROR] Parse failed: %s%n", e.getMessage());
+        //     return 2;
+        // }
 
-        EObject root = engine.getRootElement();
-        if (root == null) {
-            System.err.println("[ERROR] No root element.");
-            return 1;
-        }
+        // EObject root = engine.getRootElement();
+        // if (root == null) {
+        //     System.err.println("[ERROR] No root element.");
+        //     return 1;
+        // }
 
-        List<EObject> viewDefs   = new ArrayList<>();
-        List<EObject> viewUsages = new ArrayList<>();
-        collectViews(root, viewDefs, viewUsages);
+        // List<EObject> viewDefs   = new ArrayList<>();
+        // List<EObject> viewUsages = new ArrayList<>();
+        // collectViews(root, viewDefs, viewUsages);
 
-        System.out.printf("  Found %d ViewDefinition(s), %d ViewUsage(s)%n%n",
-            viewDefs.size(), viewUsages.size());
+        // System.out.printf("  Found %d ViewDefinition(s), %d ViewUsage(s)%n%n",
+        //     viewDefs.size(), viewUsages.size());
 
-        if (viewDefs.isEmpty() && viewUsages.isEmpty()) {
-            System.out.println("  No views defined in this file.");
-            System.out.println("  Define views like:");
-            System.out.println("    view def MyView { ... }");
-            System.out.println("    view myView : MyView { expose ... }");
-            return 0;
-        }
+        // if (viewDefs.isEmpty() && viewUsages.isEmpty()) {
+        //     System.out.println("  No views defined in this file.");
+        //     System.out.println("  Define views like:");
+        //     System.out.println("    view def MyView { ... }");
+        //     System.out.println("    view myView : MyView { expose ... }");
+        //     return 0;
+        // }
 
-        if (!viewDefs.isEmpty()) {
-            System.out.println("  ViewDefinitions:");
-            for (EObject vd : viewDefs) {
-                System.out.printf("    • %s%n", DiagramCommand.getEObjectName(vd));
-                listChildren(vd, "        ");
-            }
-            System.out.println();
-        }
+        // if (!viewDefs.isEmpty()) {
+        //     System.out.println("  ViewDefinitions:");
+        //     for (EObject vd : viewDefs) {
+        //         System.out.printf("    • %s%n", DiagramCommand.getEObjectName(vd));
+        //         listChildren(vd, "        ");
+        //     }
+        //     System.out.println();
+        // }
 
-        if (!viewUsages.isEmpty()) {
-            System.out.println("  ViewUsages:");
-            for (EObject vu : viewUsages) {
-                System.out.printf("    • %s%s%n",
-                    DiagramCommand.getEObjectName(vu), getTypeAnnotation(vu));
-                listChildren(vu, "        ");
-            }
-            System.out.println();
-        }
+        // if (!viewUsages.isEmpty()) {
+        //     System.out.println("  ViewUsages:");
+        //     for (EObject vu : viewUsages) {
+        //         System.out.printf("    • %s%s%n",
+        //             DiagramCommand.getEObjectName(vu), getTypeAnnotation(vu));
+        //         listChildren(vu, "        ");
+        //     }
+        //     System.out.println();
+        // }
 
-        if (!render && viewName == null) {
-            System.out.println("  Use --render to generate diagrams, or --view <n> --render for one view.");
-            return 0;
-        }
+        // if (!render && viewName == null) {
+        //     System.out.println("  Use --render to generate diagrams, or --view <n> --render for one view.");
+        //     return 0;
+        // }
 
-        try { Files.createDirectories(outputDir); }
-        catch (Exception e) {
-            System.err.printf("[ERROR] Cannot create %s%n", outputDir);
-            return 2;
-        }
+        // try { Files.createDirectories(outputDir); }
+        // catch (Exception e) {
+        //     System.err.printf("[ERROR] Cannot create %s%n", outputDir);
+        //     return 2;
+        // }
 
-        int rendered = 0, errors = 0;
-        List<EObject> targets = viewUsages.isEmpty() ? viewDefs : viewUsages;
-        for (EObject target : targets) {
-            String name = DiagramCommand.getEObjectName(target);
-            if (viewName != null && !viewName.equals(name)) continue;
-            System.out.printf("  Rendering: %s ...%n", name);
-            try {
-                renderElement(target, name, fmt);
-                rendered++;
-            } catch (Exception e) {
-                System.err.printf("  [ERROR] %s: %s%n", name, e.getMessage());
-                errors++;
-            }
-        }
+        // int rendered = 0, errors = 0;
+        // List<EObject> targets = viewUsages.isEmpty() ? viewDefs : viewUsages;
+        // for (EObject target : targets) {
+        //     String name = DiagramCommand.getEObjectName(target);
+        //     if (viewName != null && !viewName.equals(name)) continue;
+        //     System.out.printf("  Rendering: %s ...%n", name);
+        //     try {
+        //         renderElement(target, name, fmt);
+        //         rendered++;
+        //     } catch (Exception e) {
+        //         System.err.printf("  [ERROR] %s: %s%n", name, e.getMessage());
+        //         errors++;
+        //     }
+        // }
 
-        if (rendered > 0)
-            System.out.printf("%n  Rendered %d view(s) → %s%n", rendered, outputDir.toAbsolutePath());
-        else if (viewName != null)
-            System.err.printf("%n[WARN]  View '%s' not found.%n", viewName);
+        // if (rendered > 0)
+        //     System.out.printf("%n  Rendered %d view(s) → %s%n", rendered, outputDir.toAbsolutePath());
+        // else if (viewName != null)
+        //     System.err.printf("%n[WARN]  View '%s' not found.%n", viewName);
 
-        return errors > 0 ? 1 : 0;
+        // return errors > 0 ? 1 : 0;
+
+        return 0;
     }
 
     private void collectViews(EObject obj, List<EObject> defs, List<EObject> usages) {

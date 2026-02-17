@@ -1,37 +1,68 @@
 package org.example.sysml;
 
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.resource.Resource;
+import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.omg.sysml.interactive.SysMLInteractive;
 import org.omg.sysml.interactive.SysMLInteractiveResult;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.ArrayList;
-
+import java.util.Arrays;
 import java.util.List;
-import java.io.PrintStream;
-import java.io.OutputStream;
 
 /**
- * Wraps SysMLInteractive using the correct API discovered via reflection:
+ * Wraps SysMLInteractive for parsing, linking, and validation of SysML v2 files.
  *
- *   process(String source)  -> SysMLInteractiveResult   (parse + link)
- *   validate()              -> List<?>                  (validation issues)
- *   getRootElement()        -> Element                  (parsed model root)
+ * SysMLInteractive exposes these relevant public methods:
  *
- * eval() is intentionally NOT used for validation — it always emits a
- * spurious "Couldn't resolve reference to Element 'In[N]'" error regardless
- * of whether the model is valid, making it useless as an error signal.
+ *   process(String source)   -> SysMLInteractiveResult  (parse + link into internal RS)
+ *   validate()               -> List<?>                 (run validators on last processed model)
+ *   getResourceSet()         -> ResourceSet             (the shared RS holding library + model)
+ *   getRootElement()         -> Element                 (root of the last processed model)
+ *   loadLibrary(String path) -> void                    (load the standard library)
+ *
+ * There is NO link(Resource) or validate(Resource) overload on SysMLInteractive.
  */
 public class SysMLEngineHelper {
 
     private final SysMLInteractive sysml;
 
+    /**
+     * Bundles the result of a validate() call so that callers can inspect both
+     * the validator issue list and any parse-level errors from process() separately,
+     * giving them full control over output and exit-code logic.
+     */
+    public record ValidationResult(List<?> issues, List<ParseError> parseErrors) {
+        /** True if there are any error-severity issues or parse errors. */
+        public boolean hasErrors() {
+            return parseErrors.stream().anyMatch(ParseError::isError)
+                || issues.stream().anyMatch(SysMLEngineHelper::isErrorSeverity);
+        }
+    }
+
+    /** A single error or warning line surfaced from process(). */
+    public record ParseError(String message, boolean isError) {}
+
+    /** Shared severity check used by ValidationResult.hasErrors() and ValidateCommand. */
+    static boolean isErrorSeverity(Object issue) {
+        try {
+            Object sev = issue.getClass().getMethod("getSeverity").invoke(issue);
+            if (sev != null) return sev.toString().toUpperCase().contains("ERROR");
+        } catch (Exception ignored) {}
+        if (issue instanceof Resource.Diagnostic) return true;
+        return !issue.toString().toLowerCase().contains("warning");
+    }
+
     public SysMLEngineHelper(Path libraryPath) {
-        // Initialize Xtext standalone setup if available
+        // Initialize Xtext standalone setup if available (required outside Eclipse).
         try {
             Class<?> setupClass = Class.forName("org.omg.sysml.xtext.SysMLStandaloneSetup");
             Method doSetupMethod = setupClass.getMethod("doSetup");
@@ -39,14 +70,13 @@ public class SysMLEngineHelper {
         } catch (Exception e) {
             System.err.println("[DEBUG] Could not initialize Xtext standalone setup: " + e.getMessage());
         }
-        
+
         sysml = SysMLInteractive.getInstance();
 
         Path lib = libraryPath != null ? libraryPath : autoDetectLibrary();
         if (lib != null) {
             lib = lib.toAbsolutePath().normalize();
             String libPath = lib.toString();
-            // Ensure trailing separator for directory
             if (!libPath.endsWith("/") && !libPath.endsWith("\\")) {
                 libPath += System.getProperty("file.separator");
             }
@@ -54,19 +84,14 @@ public class SysMLEngineHelper {
             if (loglevel.equals("info")) {
                 System.out.printf("[INFO]  Loading library: %s%n", libPath);
             }
-            // Redirect System.out to verbose logger if not verbose, else let pass
             PrintStream originalOut = System.out;
-            PrintStream verboseOut = originalOut;
             if (!loglevel.equals("verbose")) {
-                // Use a custom OutputStream that discards all output (compatible with Java 8+)
-                OutputStream nullStream = new OutputStream() {
-                    @Override
-                    public void write(int b) {}
-                };
-                verboseOut = new PrintStream(nullStream);
+                PrintStream devNull = new PrintStream(new OutputStream() {
+                    @Override public void write(int b) {}
+                });
+                System.setOut(devNull);
             }
             try {
-                System.setOut(verboseOut);
                 sysml.loadLibrary(libPath);
             } finally {
                 System.setOut(originalOut);
@@ -78,38 +103,112 @@ public class SysMLEngineHelper {
 
     public SysMLInteractive getSysML() { return sysml; }
 
-    /**
-     * Parses and links a SysML file using process(String).
-     * Returns the SysMLInteractiveResult for further inspection.
-     */
-    public SysMLInteractiveResult process(Path sysmlFile) throws IOException {
-        String source = Files.readString(sysmlFile);
-        // process(String) parses + links the source, populating the resource set.
-        // Unlike eval(), it does not produce spurious cross-resource errors.
-        return sysml.process(source);
-    }
+    // -------------------------------------------------------------------------
+    // Primary validation API  (process -> validate)
+    // -------------------------------------------------------------------------
 
     /**
-     * Runs validation on the currently loaded model.
-     * Must be called after process().
-     * Returns a list of issue objects (type varies by version).
+     * Reads a SysML source file, parses and links it via process(String), runs
+     * all validators via validate(), and returns a ValidationResult containing
+     * both the validator issue list and any parse-level errors, with the known
+     * spurious "Couldn't resolve reference to Element 'In[N]'" linker noise
+     * already filtered out.
+     *
+     * All output decisions (printing, exit codes) are left to the caller.
      */
-    @SuppressWarnings("unchecked")
-    public List<?> validate() {
+    public ValidationResult validate(Path sysmlFile) {
+        String source;
         try {
-            return sysml.validate();
+            source = Files.readString(sysmlFile);
+        } catch (IOException e) {
+            System.err.println("[ERROR] Cannot read '" + sysmlFile + "': " + e.getMessage());
+            return new ValidationResult(List.of(), List.of());
+        }
+
+        SysMLInteractiveResult result = sysml.process(source);
+        List<?> issues = sysml.validate();
+
+        // Collect parse-level errors/warnings from process(), filtering spurious noise.
+        List<ParseError> parseErrors = new ArrayList<>();
+        if (result != null) {
+            String resultStr = result.toString();
+            if (resultStr != null && !resultStr.isBlank() && !resultStr.equals("null")) {
+                // SysMLInteractive assigns internal numeric resource names like "1.sysml",
+                // "2.sysml", etc. Replace any occurrence with the actual file path so that
+                // error messages are meaningful to the user.
+                String displayName = sysmlFile.toString();
+                for (String line : resultStr.split("\\r?\\n")) {
+                    if (line.isBlank()) continue;
+                    if (line.contains("Couldn't resolve reference to Element")) continue;
+                    String low = line.toLowerCase();
+                    if (low.contains("error") || low.contains("warning")) {
+                        String msg = line.trim().replaceAll("\\b\\d+\\.sysml\\b",
+                                java.util.regex.Matcher.quoteReplacement(displayName));
+                        parseErrors.add(new ParseError(msg, low.contains("error")));
+                    }
+                }
+            }
+        }
+
+        return new ValidationResult(issues != null ? issues : List.of(), parseErrors);
+    }
+
+    // -------------------------------------------------------------------------
+    // ResourceSet access  (for DiagramCommand and verbose tree printing)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns the ResourceSet owned by the SysMLInteractive instance.
+     */
+    public ResourceSet getResourceSet() {
+        try {
+            Method m = sysml.getClass().getMethod("getResourceSet");
+            return (ResourceSet) m.invoke(sysml);
         } catch (Exception e) {
-            System.err.println("[WARN]  validate() failed: " + e.getMessage());
-            return List.of();
+            System.err.println("[ERROR] Could not retrieve ResourceSet: " + e.getMessage());
+            return null;
         }
     }
 
     /**
-     * Returns the root element of the parsed model.
+     * Loads an additional SysML file directly into the shared ResourceSet using
+     * the correct EMF URI type (URI.createFileURI) so the resource factory
+     * registry resolves to the SysML parser.
+     *
+     * @return the loaded Resource, or null on failure.
+     */
+    public Resource loadResourceIntoRS(Path sysmlFile) {
+        ResourceSet rs = getResourceSet();
+        if (rs == null) return null;
+
+        URI emfUri = URI.createFileURI(sysmlFile.toAbsolutePath().normalize().toString());
+
+        Resource existing = rs.getResource(emfUri, false);
+        if (existing != null) return existing;
+
+        try (InputStream in = Files.newInputStream(sysmlFile)) {
+            Resource resource = rs.createResource(emfUri);
+            if (resource == null) {
+                System.err.println("[ERROR] No resource factory registered for: " + emfUri);
+                return null;
+            }
+            resource.load(in, null);
+            return resource;
+        } catch (IOException e) {
+            System.err.println("[ERROR] Failed to load resource '" + sysmlFile + "': " + e.getMessage());
+            return null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Root-element access
+    // -------------------------------------------------------------------------
+
+    /**
+     * Returns the root element of the model last processed via process().
      */
     public EObject getRootElement() {
         try {
-            // getRootElement() returns Element which extends EObject
             Object el = sysml.getRootElement();
             if (el instanceof EObject eo) return eo;
         } catch (Exception e) {
@@ -119,9 +218,17 @@ public class SysMLEngineHelper {
     }
 
     /**
-     * Returns the input resources from the resource set.
-     * Used by DiagramCommand to access parsed model elements.
+     * Returns the first top-level EObject from the given Resource's content list.
      */
+    public EObject getRootElement(Resource resource) {
+        if (resource == null || resource.getContents().isEmpty()) return null;
+        return resource.getContents().get(0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Misc helpers
+    // -------------------------------------------------------------------------
+
     @SuppressWarnings("unchecked")
     public List<?> getInputResources() {
         try {
@@ -131,44 +238,42 @@ public class SysMLEngineHelper {
         }
     }
 
-    private static Path autoDetectLibrary() {
-        List<Path> candidatePaths = new ArrayList<>();
+    // -------------------------------------------------------------------------
+    // Library auto-detection
+    // -------------------------------------------------------------------------
 
-        // 1. Check environment variable first
+    private static Path autoDetectLibrary() {
+        List<Path> candidates = new ArrayList<>();
+
         String env = System.getenv("SYSML_LIBRARY");
         if (env != null && Files.isDirectory(Path.of(env))) {
-            candidatePaths.add(Path.of(env));
+            candidates.add(Path.of(env));
         }
 
-        // 2. Add relative paths from current working directory
-        candidatePaths.addAll(Arrays.asList(
+        candidates.addAll(Arrays.asList(
             Path.of("./src/submodules/SysML-v2-Release/sysml.library"),
             Path.of("./submodules/SysML-v2-Release/sysml.library"),
             Path.of("../submodules/SysML-v2-Release/sysml.library"),
             Path.of("../../submodules/SysML-v2-Release/sysml.library")
         ));
 
-        // 3. Add paths relative to user home directory
         String home = System.getProperty("user.home");
-        candidatePaths.addAll(Arrays.asList(
+        candidates.addAll(Arrays.asList(
             Path.of(home, "../submodules/SysML-v2-Release/sysml.library"),
             Path.of(home, "../../submodules/SysML-v2-Release/sysml.library")
         ));
 
-        // 4. Check all candidate paths in order
-        for (Path path : candidatePaths) {
+        for (Path path : candidates) {
             if (Files.isDirectory(path)) {
-                // 5. Verify contains required SysML files
-                Path sysmlFile = path.resolve("Systems Library/SysML.sysml");
-                if (Files.exists(sysmlFile)) {
-                    
-                    System.out.println("[INFO] Found library at: " + path);
+                Path marker = path.resolve("Systems Library/SysML.sysml");
+                if (Files.exists(marker)) {
+                    System.out.println("[INFO]  Found library at: " + path);
                     return path;
                 }
             }
         }
 
-        System.out.println("[WARN] Sysml library not found, please specify the directory using --libdir");
+        System.out.println("[WARN]  SysML library not found; specify with --libdir or $SYSML_LIBRARY.");
         return null;
     }
 }
