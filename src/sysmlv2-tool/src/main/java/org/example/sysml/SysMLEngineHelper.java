@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.ArrayList;
 
 import java.util.List;
 import java.io.PrintStream;
@@ -131,32 +132,39 @@ public class SysMLEngineHelper {
     }
 
     private static Path autoDetectLibrary() {
-        String env = System.getenv("SYSML_LIBRARY");
-        if (env != null) { Path p = Path.of(env); if (Files.isDirectory(p)) return p; }
+        List<Path> candidatePaths = new ArrayList<>();
 
-        for (String rel : new String[]{
-            "./src/submodules/SysML-v2-Release/sysml.library",
-            "./submodules/SysML-v2-Release/sysml.library",
-            "../submodules/SysML-v2-Release/sysml.library",
-            "../../submodules/SysML-v2-Release/sysml.library",
-        }) {
-            Path p = Path.of(rel);
-            if (Files.isDirectory(p)) 
-            {
-                System.out.println("[INFO] Found library at: " + p);
-                return p;
-            }
+        // 1. Check environment variable first
+        String env = System.getenv("SYSML_LIBRARY");
+        if (env != null && Files.isDirectory(Path.of(env))) {
+            candidatePaths.add(Path.of(env));
         }
 
+        // 2. Add relative paths from current working directory
+        candidatePaths.addAll(Arrays.asList(
+            Path.of("./src/submodules/SysML-v2-Release/sysml.library"),
+            Path.of("./submodules/SysML-v2-Release/sysml.library"),
+            Path.of("../submodules/SysML-v2-Release/sysml.library"),
+            Path.of("../../submodules/SysML-v2-Release/sysml.library")
+        ));
+
+        // 3. Add paths relative to user home directory
         String home = System.getProperty("user.home");
-        for (String rel : new String[]{
-            "../submodules/SysML-v2-Release/sysml.library",
-            "../../submodules/SysML-v2-Release/sysml.library",
-        }) {
-            Path p = Path.of(home, rel);
-            if (Files.isDirectory(p)) {
-                System.out.println("[INFO] Found library at: " + p);
-                return p;
+        candidatePaths.addAll(Arrays.asList(
+            Path.of(home, "../submodules/SysML-v2-Release/sysml.library"),
+            Path.of(home, "../../submodules/SysML-v2-Release/sysml.library")
+        ));
+
+        // 4. Check all candidate paths in order
+        for (Path path : candidatePaths) {
+            if (Files.isDirectory(path)) {
+                // 5. Verify contains required SysML files
+                Path sysmlFile = path.resolve("Systems Library/SysML.sysml");
+                if (Files.exists(sysmlFile)) {
+                    
+                    System.out.println("[INFO] Found library at: " + path);
+                    return path;
+                }
             }
         }
 
