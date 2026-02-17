@@ -5,11 +5,16 @@ import net.sourceforge.plantuml.FileFormatOption;
 import net.sourceforge.plantuml.SourceStringReader;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
+import org.omg.sysml.lang.sysml.impl.FeatureValueImpl;
 import org.omg.sysml.plantuml.SysML2PlantUMLText;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
@@ -17,6 +22,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -182,7 +188,9 @@ public class DiagramCommand implements Callable<Integer> {
 
                 //skip stdlib resources if --nostdlib is set
                 if (skipStdlib && isStandardLibraryResource(resource)) {
-                    System.out.printf("[INFO] Skipping standard library resource: %s%n", resource.getURI());
+                    String uriString = resource.getURI().toString();
+                    String decodedUri = decodeUri(uriString);
+                    System.out.printf("[INFO] Skipping standard library resource: %s%n", decodedUri );
                     continue;
                 }
 
@@ -212,6 +220,16 @@ public class DiagramCommand implements Callable<Integer> {
                 e.printStackTrace();
             }
             return 1;
+        }
+    }
+
+    //Helper to decode URIs that may be percent-encoded, for better readability in logs and error messages
+    private static String decodeUri(String uriString) {
+        try {
+            URI uri = new URI(uriString);
+            return URLDecoder.decode(uri.toString(), StandardCharsets.UTF_8);
+        } catch (URISyntaxException e) {
+            return uriString;
         }
     }
 
@@ -292,6 +310,43 @@ public class DiagramCommand implements Callable<Integer> {
         return skipped > 0 ? 1 : 0;
     }
 
+
+    /**
+    * Extracts a meaningful string representation from a FeatureValueImpl object.
+    * If it's not a FeatureValueImpl, returns the original object's toString().
+    */
+    private static String extractFeatureValue(Object obj) {
+        if (obj instanceof FeatureValueImpl) {
+            FeatureValueImpl feature = (FeatureValueImpl) obj;
+            // Try to get the actual value if available
+            Object value = feature.getValue(); // Hypothetical method
+            if (value != null) {
+                return value.toString();
+            }
+            // Fallback to feature name if available
+            String name = getFeatureName(feature);
+            return name != null ? name : "unknown";
+        }
+        return obj != null ? obj.toString() : "null";
+    }
+
+    /**
+     * Tries to get the name of a feature, handling various possible method names.
+     */
+    private static String getFeatureName(FeatureValueImpl feature) {
+        for (String methodName : new String[]{"getName", "getDeclaredName", "getFeatureName"}) {
+            try {
+                Method m = feature.getClass().getMethod(methodName);
+                Object result = m.invoke(feature);
+                if (result instanceof String s && !s.isBlank()) {
+                    return s;
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+
     // ── PlantUML generation ──────────────────────────────────────────────────
 
     private void writeDiagram(EObject element, String name, String fmt) throws Exception {
@@ -352,6 +407,24 @@ public class DiagramCommand implements Callable<Integer> {
     }
 
     /**
+     * Cleans up PlantUML output by replacing FeatureValueImpl references with meaningful values.
+     */
+    private static String cleanFeatureReferences(String puml) {
+        // Replace object references with cleaner format
+        String cleaned = puml.replaceAll("org\\.omg\\.sysml\\.lang\\.sysml\\.impl\\.FeatureValueImpl@[0-9a-f]+", "unknown value");
+        
+        // Remove redundant null declarations
+        cleaned = cleaned.replaceAll("\\(aliasIds: null, declaredShortName: null, declaredName: null, isImpliedIncluded: false\\)", "");
+        cleaned = cleaned.replaceAll("\\(isImplied: false\\) \\(memberShortName: null, memberName: null, visibility: public\\) \\(isInitial: false, isDefault: false\\)", "");
+        
+        // Clean up boolean values
+        cleaned = cleaned.replaceAll("true", "yes");
+        cleaned = cleaned.replaceAll("false", "no");
+        
+        return cleaned;
+    }
+
+    /**
      * Generate PlantUML for a single element using the SysML2PlantUMLText API.
      * 
      * The actual API is sysML2PUML(List<Element>) which takes a list of elements.
@@ -366,6 +439,12 @@ public class DiagramCommand implements Callable<Integer> {
             if (String.class.equals(m.getReturnType())) {
                 List<Object> elements = List.of(element);
                 Object result = m.invoke(viz, elements);
+
+                // Clean up the result if it contains object references
+                if (result != null && result.toString().contains("FeatureValueImpl")) {
+                    return cleanFeatureReferences(result.toString());
+                }
+
                 return result != null ? result.toString() : null;
             }
         } catch (NoSuchMethodException e) {
@@ -380,6 +459,11 @@ public class DiagramCommand implements Callable<Integer> {
                 Method m = viz.getClass().getMethod(methodName, EObject.class);
                 if (String.class.equals(m.getReturnType())) {
                     Object result = m.invoke(viz, element);
+
+                    // Clean up the result if it contains object references
+                    if (result != null && result.toString().contains("FeatureValueImpl")) {
+                        return cleanFeatureReferences(result.toString());
+                    }
                     return result != null ? result.toString() : null;
                 }
             } catch (NoSuchMethodException ignored) {}
