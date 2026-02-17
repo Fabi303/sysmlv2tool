@@ -8,6 +8,8 @@ import picocli.CommandLine.Parameters;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -57,8 +59,8 @@ public class ValidateCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        // Expand each input into an ordered list of .sysml files.
-        List<Path> files = new ArrayList<>();
+        // Use Set to avoid duplicates
+        Set<Path> uniqueFiles = new LinkedHashSet<>();
         int totalErrors  = 0;
 
         for (Path input : inputs) {
@@ -74,16 +76,19 @@ public class ValidateCommand implements Callable<Integer> {
                 } else {
                     System.out.printf("[INFO]  Found %d .sysml file(s) under: %s%n",
                         found.size(), input);
-                    files.addAll(found);
+                    uniqueFiles.addAll(found);
                 }
             } else {
-                files.add(input);
+                uniqueFiles.add(input);
             }
         }
 
-        if (files.isEmpty()) {
+        if (uniqueFiles.isEmpty()) {
             return totalErrors > 0 ? -1 : 0;
         }
+
+        // Convert to list after deduplication
+        List<Path> files = new ArrayList<>(uniqueFiles);
 
         SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
 
