@@ -14,6 +14,16 @@ Basic diagram export is also working.
 
 # Usage
 
+## getting help
+
+java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar --help
+
+To get a list of available command.
+
+java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar help <command>
+
+Get help on a specific command.
+
 ## Specifying the sysml.library path
 
 The sysml base library files are required. They can be found in the Sysml-v2-Release submodule.
@@ -57,6 +67,9 @@ into context and validated. This allows for cross file import dependencies.
 Specific elements can be rendered by supplying the "-e" "--element" parameter and the elements name.
 diagram --element  MyPartName               -- Render my part.
 
+### Exclude stdandard lib
+
+To exclude the standard sysmlv2 library imports from being rendered, add --nostdlib to the command.
 
 # Todo
 
