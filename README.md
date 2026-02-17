@@ -4,15 +4,57 @@ A standalone Java command-line tool to **validate**, and **render views** or **r
 from SysML v2 files to puml — using the OMG Pilot Implementation directly.
 No API server, no Jupyter, no network required.
 
+Since I am by no means a java developer, this codebase is heavily vibecoded, sometimes with focus to 
+just make it work, not look pretty.
+
 # Current status
 
-Loading the Sysmlv2 Library and validating single model files is working
+Loading the Sysmlv2 Library and validating models (single files and recursive directory content)
+Basic diagram export is also working.
+
+# Usage
+
+## Specifying the sysml.library path
+
+The sysml base library files are required. They can be found in the Sysml-v2-Release submodule.
+the library is searched for in the following locations:
+
+- Path specified in the SYSML_LIBRARY environment variable
+- "./src/submodules/SysML-v2-Release/sysml.library",
+- "./submodules/SysML-v2-Release/sysml.library",
+- "../submodules/SysML-v2-Release/sysml.library",
+- "../../submodules/SysML-v2-Release/sysml.library"
+- $Userhome, "../submodules/SysML-v2-Release/sysml.library",
+- $Userhome, "../../submodules/SysML-v2-Release/sysml.library"
+
+If the library folder is not detected automatically, it can be supplied using the --libdir parameter on startup.
+
+## Validation
+
+java -Dsysml.debug=true -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar validate <path or filename>
+
+Validate a given file or directory containing files, if a directory is given, all files inside the directory including subfolders are loaded 
+into context and validated. This allows for cross file import dependencies.
+
+0 is returned on successful validation, -1 otherwise.
+
+## Diagram generation
+
+ * Usage modes:
+ *   diagram <path>                         -- diagram the root element(s)
+ *   diagram <path> --element MyPart        -- diagram a specific named element
+ *   diagram <path> --all-elements          -- one diagram per top-level element
+  
+ * Select output file format:
+ *   diagram -f svg <path>                  -- Output in svg format
+ *   diagram -f png <path>                  -- Output in png format
+   
+by default, puml is generated (not extremely useful, because it contains sysmlv2 specific skins)
+png and svg is also supported and can be selected using "--format", "-f" after the diagram command.
+
 
 # Todo
 
-- Add the ability to load a bunch of sysml model files at once, to be able to validate cross
-references
-- Ability to render diagrams to puml
 - Ability to list and render view definitions
 - Write comprehensive build instructions to build this thing
 
