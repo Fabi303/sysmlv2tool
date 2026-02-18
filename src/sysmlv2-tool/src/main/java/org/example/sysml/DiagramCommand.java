@@ -4,6 +4,7 @@ import net.sourceforge.plantuml.FileFormat;
 import net.sourceforge.plantuml.FileFormatOption;
 import net.sourceforge.plantuml.SourceStringReader;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.omg.sysml.plantuml.SysML2PlantUMLText;
 import picocli.CommandLine.Command;
@@ -246,20 +247,31 @@ public class DiagramCommand implements Callable<Integer> {
         return 1;
     }
 
-    /**
-     * Find and diagram a specific view (ViewDefinition or ViewUsage) across all loaded files.
+/**
+     * Findet und diagrammiert eine spezifische View (ViewDefinition oder ViewUsage) nach Namen.
+     * Anstatt die View selbst darzustellen, werden die von der View exponierten Elemente diagrammiert.
      */
     private int generateView(List<EObject> roots, String name, String fmt) throws Exception {
         for (EObject root : roots) {
             EObject view = findView(root, name);
             if (view != null) {
-                writeDiagram(view, name, fmt);
-                System.out.printf("%n  Generated diagram for view '%s'%n", name);
+                // Exposed Elements aus der View extrahieren
+                List<EObject> exposedElements = getExposedElements(view);
+                
+                if (exposedElements.isEmpty()) {
+                    System.err.printf("[WARN] View '%s' has no exposed elements%n", name);
+                    return 1;
+                }
+                
+                // Diagramm für alle exponierten Elemente generieren
+                writeDiagram(exposedElements, name, fmt);
+                System.out.printf("[INFO] Generated diagram for view '%s' with %d exposed elements%n", 
+                                  name, exposedElements.size());
                 return 0;
             }
         }
-        System.err.printf("[ERROR] View '%s' not found in any loaded file.%n", name);
-        System.err.println("        Use 'views <file>' to list available views.");
+        System.err.printf("[ERROR] View '%s' not found in any loaded file%n", name);
+        System.err.println("        Use 'views <path>' to list available views.");
         return 1;
     }
 
@@ -296,13 +308,63 @@ public class DiagramCommand implements Callable<Integer> {
         return skipped > 0 ? 1 : 0;
     }
 
+private List<EObject> getExposedElements(EObject view) {
+    List<EObject> elements = new ArrayList<>();
+
+    // Iterate through all direct children of the view
+    for (EObject child : view.eContents()) {
+        // We are looking for 'Expose' relationships (a type of Membership)
+        if (!child.eClass().getName().contains("Expose")) {
+            continue;
+        }
+
+        try {
+            EObject exposedTarget = null;
+
+            // The target of an Expose relationship is held in the 'importedElement' reference
+            // for this version of the SysML pilot implementation.
+            for (EReference ref : child.eClass().getEAllReferences()) {
+                if ("importedElement".equals(ref.getName())) {
+                    Object target = child.eGet(ref);
+                    if (target instanceof EObject) {
+                        exposedTarget = (EObject) target;
+                        break; // Found it
+                    }
+                }
+            }
+
+            if (exposedTarget != null) {
+                // Add the actual target element (e.g., a Requirement or Part),
+                // not the Expose membership itself.
+                elements.add(exposedTarget);
+                if (Boolean.getBoolean("sysml.debug")) {
+                    System.out.printf("[DEBUG] View '%s' exposes element: %s%n",
+                        getEObjectName(view), getEObjectName(exposedTarget));
+                }
+            } else if (Boolean.getBoolean("sysml.debug")) {
+                System.err.printf("[DEBUG] Could not find target of '%s' in View '%s'%n",
+                    getEObjectName(child), getEObjectName(view));
+            }
+
+        } catch (Exception e) {
+            System.err.printf("[WARN] Could not resolve exposure in view for element %s: %s%n",
+                getEObjectName(child), e.getMessage());
+        }
+    }
+    return elements;
+}
+
     // ── PlantUML generation ──────────────────────────────────────────────────
 
-    private void writeDiagram(EObject element, String name, String fmt) throws Exception {
-        String puml = generatePlantUML(element);
-        if (puml == null || puml.isBlank()) {
-            System.out.printf("[WARN]  Empty output for '%s' — skipping.%n", name);
-            return;
+    private void writeDiagram(Object target, String name, String fmt) throws Exception {
+
+        String puml = "";
+        if (target instanceof List<?> list && !list.isEmpty()) {
+            puml = generatePlantUML(list);
+        } else if (target instanceof EObject element) {
+            puml = generatePlantUML(element);
+        } else {
+            throw new IllegalArgumentException("Invalid target type: " + target.getClass());
         }
         if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
 
@@ -372,6 +434,48 @@ public class DiagramCommand implements Callable<Integer> {
         throw new UnsupportedOperationException(
             "Cannot find sysML2PUML(List) method on SysML2PlantUMLText. " +
             "Check pilot implementation version compatibility.");
+    }
+
+    /**
+     * Generiert PlantUML für mehrere Elemente.
+     */
+    static String generatePlantUML(List<?> elements) throws Exception {
+        SysML2PlantUMLText viz = createViz();
+        List<EObject> elementList = new ArrayList<>();
+        for (Object el : elements) {
+            if (el instanceof EObject eo) {
+                elementList.add(eo);
+            }
+        }
+        if (elementList.isEmpty()) return "";
+
+        try {
+            // The primary method for batch processing is sysML2PUML(List)
+            Method m = viz.getClass().getMethod("sysML2PUML", List.class);
+            if (String.class.equals(m.getReturnType())) {
+                Object result = m.invoke(viz, elementList);
+                return result != null ? result.toString() : null;
+            }
+            throw new NoSuchMethodException("Method sysML2PUML(List) found, but returns "
+                + m.getReturnType().getSimpleName() + " instead of String");
+
+        } catch (NoSuchMethodException e) {
+            System.err.println("[ERROR] No suitable visualization method found on SysML2PlantUMLText for multiple elements.");
+            System.err.println("        A method 'String sysML2PUML(List)' is required for generating diagrams from views.");
+            System.err.println("        Available methods on " + viz.getClass().getName() + ":");
+            for (Method m : viz.getClass().getMethods()) {
+                if (m.getDeclaringClass() == Object.class) continue;
+                System.err.printf("          - %s %s(%s)%n",
+                    m.getReturnType().getSimpleName(),
+                    m.getName(),
+                    Arrays.stream(m.getParameterTypes())
+                        .map(Class::getSimpleName)
+                        .collect(Collectors.joining(", ")));
+            }
+            throw new UnsupportedOperationException(
+                "Cannot find required 'sysML2PUML(List)' method on SysML2PlantUMLText. " +
+                "Please check pilot implementation version compatibility.", e);
+        }
     }
 
     static SysML2PlantUMLText createViz() throws Exception {
