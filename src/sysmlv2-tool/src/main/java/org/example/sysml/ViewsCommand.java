@@ -130,7 +130,7 @@ public class ViewsCommand implements Callable<Integer> {
         if (!viewDefs.isEmpty()) {
             System.out.println("  ViewDefinitions:");
             for (EObject vd : viewDefs) {
-                System.out.printf("    • %s%n", DiagramCommand.getEObjectName(vd));
+                System.out.printf("    %s%n", DiagramCommand.getEObjectName(vd));
                 listChildren(vd, "        ");
             }
             System.out.println();
@@ -139,7 +139,7 @@ public class ViewsCommand implements Callable<Integer> {
         if (!viewUsages.isEmpty()) {
             System.out.println("  ViewUsages:");
             for (EObject vu : viewUsages) {
-                System.out.printf("    • %s%s%n",
+                System.out.printf("    %s%s%n",
                     DiagramCommand.getEObjectName(vu), getTypeAnnotation(vu));
                 listChildren(vu, "        ");
             }
