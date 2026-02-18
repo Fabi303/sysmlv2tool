@@ -1,6 +1,7 @@
 package org.example.sysml;
 
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.resource.Resource;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
@@ -8,8 +9,10 @@ import picocli.CommandLine.Parameters;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -18,7 +21,7 @@ import static org.example.sysml.FileUtils.*;
 
 /**
  * Lists View/Viewpoint elements from a SysML v2 file.
- * 
+ *
  * This command only discovers and displays views defined in the model.
  * To render views as diagrams, use: diagram <file> --view <viewName>
  */
@@ -30,15 +33,15 @@ import static org.example.sysml.FileUtils.*;
 public class ViewsCommand implements Callable<Integer> {
     private final SysMLTool parent;
 
-    @Parameters(paramLabel = "<file>", description = ".sysml file to process", arity = "1")
-     private List<Path> inputs;
+    @Parameters(paramLabel = "<file>", description = ".sysml file to process", arity = "1..*")
+    private List<Path> inputs;
 
     public ViewsCommand(SysMLTool parent) {
         this.parent = parent;
     }
 
     @Override
-     public Integer call() {
+    public Integer call() {
         SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
 
         // Collect all input files (expand directories)
@@ -79,11 +82,10 @@ public class ViewsCommand implements Callable<Integer> {
         Map<Path, SysMLEngineHelper.ValidationResult> results = engine.validateAll(files);
 
         // Check for validation errors
-        boolean hasErrors = false;
         for (Map.Entry<Path, SysMLEngineHelper.ValidationResult> entry : results.entrySet()) {
             Path file = entry.getKey();
             SysMLEngineHelper.ValidationResult result = entry.getValue();
-            
+
             long errorCount = result.parseErrors().stream()
                 .filter(SysMLEngineHelper.ParseError::isError).count()
                 + result.issues().stream()
@@ -95,19 +97,27 @@ public class ViewsCommand implements Callable<Integer> {
                 for (SysMLEngineHelper.ParseError pe : result.parseErrors()) {
                     if (pe.isError()) System.err.printf("  [x] %s%n", pe.message());
                 }
-                hasErrors = true;
                 scanErrors++;
             }
         }
 
-        // Collect views from all loaded roots
-        List<EObject> viewDefs   = new ArrayList<>();
-        List<EObject> viewUsages = new ArrayList<>();
-        
+        // Collect views from all loaded roots, using a Map to deduplicate by qualified name
+        // This is necessary because the model loader appears to be creating duplicate
+        // EObject models for the same logical content.
+        Map<String, EObject> viewDefs   = new LinkedHashMap<>();
+        Map<String, EObject> viewUsages = new LinkedHashMap<>();
+
         for (Resource resource : engine.getResourceSet().getResources()) {
-            if (resource.getURI().toString().contains("sysml.library")) continue;
-            if (resource.getContents().isEmpty()) continue;
-            
+            if (resource.getURI().toString().contains("sysml.library")) {
+                continue;
+            }
+            if (!resource.getURI().isFile()) {
+                continue;
+            }
+            if (resource.getContents().isEmpty()) {
+                continue;
+            }
+
             EObject root = resource.getContents().get(0);
             collectViews(root, viewDefs, viewUsages);
         }
@@ -129,7 +139,7 @@ public class ViewsCommand implements Callable<Integer> {
 
         if (!viewDefs.isEmpty()) {
             System.out.println("  ViewDefinitions:");
-            for (EObject vd : viewDefs) {
+            for (EObject vd : viewDefs.values()) {
                 System.out.printf("    %s%n", DiagramCommand.getEObjectName(vd));
                 listChildren(vd, "        ");
             }
@@ -138,7 +148,7 @@ public class ViewsCommand implements Callable<Integer> {
 
         if (!viewUsages.isEmpty()) {
             System.out.println("  ViewUsages:");
-            for (EObject vu : viewUsages) {
+            for (EObject vu : viewUsages.values()) {
                 System.out.printf("    %s%s%n",
                     DiagramCommand.getEObjectName(vu), getTypeAnnotation(vu));
                 listChildren(vu, "        ");
@@ -152,26 +162,59 @@ public class ViewsCommand implements Callable<Integer> {
         return scanErrors > 0 ? 1 : 0;
     }
 
-    private void collectViews(EObject obj, List<EObject> defs, List<EObject> usages) {
+    private void collectViews(EObject obj, Map<String, EObject> defs, Map<String, EObject> usages) {
         String typeName = obj.eClass().getName();
-        if (typeName.equals("ViewDefinition"))     defs.add(obj);
-        else if (typeName.equals("ViewUsage"))     usages.add(obj);
-        for (EObject child : obj.eContents()) collectViews(child, defs, usages);
+        if (typeName.equals("ViewDefinition")) {
+            defs.put(getQualifiedName(obj), obj);
+        } else if (typeName.equals("ViewUsage")) {
+            usages.put(getQualifiedName(obj), obj);
+        }
+        for (EObject child : obj.eContents()) {
+            collectViews(child, defs, usages);
+        }
+    }
+
+    private static String getQualifiedName(EObject obj) {
+        if (obj == null) return "";
+        List<String> parts = new ArrayList<>();
+        for (EObject o = obj; o != null; o = o.eContainer()) {
+            String name = DiagramCommand.getEObjectName(o);
+            // Heuristic to stop at an unnamed root model element, which often has a generated name
+            if (o.eContainer() == null && name.startsWith(o.eClass().getName() + "_")) {
+                break;
+            }
+            parts.add(name);
+        }
+        Collections.reverse(parts);
+        return String.join(".", parts);
     }
 
     private void listChildren(EObject el, String indent) {
         for (EObject child : el.eContents()) {
             String typeName = child.eClass().getName();
-            String name     = DiagramCommand.getEObjectName(child);
-            switch (typeName) {
-                case "ExposureUsage", "RenderingUsage" ->
-                    System.out.printf("%sexpose: %s%n", indent, name);
-                case "PartUsage" ->
-                    System.out.printf("%spart:   %s%s%n", indent, name, getTypeAnnotation(child));
-                case "RequirementUsage" ->
-                    System.out.printf("%sreq:    %s%n", indent, name);
-                default -> {}
+
+            // Handle 'expose' relationships, which are a form of Membership
+            if (typeName.contains("Expose")) {
+                EObject exposedTarget = null;
+                // The actual exposed element is found via the 'importedElement' reference
+                for (EReference ref : child.eClass().getEAllReferences()) {
+                    if ("importedElement".equals(ref.getName())) {
+                        Object target = child.eGet(ref);
+                        if (target instanceof EObject) {
+                            exposedTarget = (EObject) target;
+                            break;
+                        }
+                    }
+                }
+
+                if (exposedTarget != null) {
+                    System.out.printf("%sexpose: %s%s%n", indent,
+                        DiagramCommand.getEObjectName(exposedTarget),
+                        getTypeAnnotation(exposedTarget));
+                }
             }
+            // Other direct children of a view could be handled here if needed,
+            // but for now, we focus on correctly listing exposed elements.
         }
     }
 

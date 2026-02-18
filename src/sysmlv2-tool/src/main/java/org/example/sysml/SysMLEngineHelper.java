@@ -1,6 +1,5 @@
 package org.example.sysml;
 
-import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
@@ -8,7 +7,6 @@ import org.omg.sysml.interactive.SysMLInteractive;
 import org.omg.sysml.interactive.SysMLInteractiveResult;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
@@ -34,33 +32,27 @@ import java.util.regex.Pattern;
  *   getRootElement()         -> Element                 (root of the last processed model)
  *   loadLibrary(String path) -> void                    (load the standard library)
  *
- * There is NO link(Resource) or validate(Resource) overload on SysMLInteractive.
+ * There is NO link(Resource) or validate(Resource) overload on SysMLInteractive;
+ * process(String) is the sole entry point for loading model content.
  *
  * Batch validation strategy
  * -------------------------
- * When validating a set of files together (e.g. an entire directory), importing
- * dependencies must already be in the ResourceSet before the importing file is
- * loaded, otherwise cross-resource references will be unresolved at link time.
+ * When validating a set of files together (e.g. an entire directory), all
+ * dependencies must already be registered in the shared ResourceSet before the
+ * file that imports them is processed, so that cross-namespace references resolve
+ * correctly at link time.
  *
- * Depth-based sorting is insufficient because a dependency can live in a
- * shallower or peer directory relative to its consumer. The only reliable
- * ordering is one derived from the actual 'import' declarations in each file.
+ * The Pilot Implementation resolves imports by namespace name (e.g. "import
+ * Vehicles::*"), not by file path. It is therefore sufficient to call
+ * process(String) for each file in topological dependency order – each call
+ * registers the file's namespace in the shared RS, making it visible to
+ * subsequent process() calls.
  *
- * We therefore use a three-pass approach:
- *
- *   Sort  -- topologically order files by their 'import' declarations so that
- *            every dependency is guaranteed to precede its consumers in the
- *            load list, regardless of filesystem layout.
- *
- *   Pass 1 -- load all files in topological order via loadResourceIntoRS(Path),
- *             which assigns each resource a real file:// URI anchor. EMF resolves
- *             cross-resource references at load time; the referenced namespace
- *             must already be present in the RS at that point.
- *             Parse-level diagnostics are harvested from each Resource.
- *
- *   Pass 2 -- for each file, call process(String) + validate() so that
- *             SysMLInteractive registers it as "current" and runs the full
- *             semantic checker suite against it.
+ * Using loadResourceIntoRS() in addition to process() would insert a second,
+ * file://-anchored Resource for the same content alongside the synthetic-URI
+ * Resource that process() creates internally, causing every model element to
+ * appear twice when iterating over the ResourceSet. We therefore rely exclusively
+ * on process() and perform a single topological sort to guarantee correct ordering.
  */
 public class SysMLEngineHelper {
 
@@ -168,63 +160,39 @@ public class SysMLEngineHelper {
      * Validates a set of SysML files together so that cross-file imports resolve
      * correctly.
      *
-     * <p>Sort: topologically order files by import dependencies so that every
-     * dependency is loaded into the RS before the files that import it.
-     * Depth-based sorting is unreliable because a dependency can live in any
-     * directory relative to its consumer.
+     * <p>Files are topologically sorted by their import declarations so that every
+     * dependency is processed before the file that imports it. Each file is then
+     * loaded exclusively via {@code process(String) + validate()}, the sole public
+     * API entry point on SysMLInteractive. This avoids the duplicate-Resource
+     * problem that arises when {@code loadResourceIntoRS()} is combined with
+     * {@code process()} for the same file.
      *
-     * <p>Pass 1: load all files in topological order via loadResourceIntoRS(Path),
-     * which gives each resource a real file:// URI anchor. EMF resolves
-     * cross-resource references at load time; the referenced namespace must
-     * already be present in the RS. Parse diagnostics are harvested from each
-     * Resource's own error/warning lists.
-     *
-     * <p>Pass 2: for each file call process(String) + validate() so that
-     * SysMLInteractive registers it as "current" and runs the full semantic
-     * checker suite.
-     *
-     * @param files ordered list of .sysml files to validate together
+     * @param files list of .sysml files to validate together
      * @return map from each Path to its ValidationResult, in input order
      */
     public Map<Path, ValidationResult> validateAll(List<Path> files) {
 
-        // --- Topological sort by import declarations ---
+        // Topologically sort by import declarations so every dependency is
+        // processed before the file that imports it.
         List<Path> ordered = topologicalSort(files);
 
-        // --- Pass 1: load all files into the RS with real file:// URIs ---
-        Map<Path, List<ParseError>> parseErrorsByFile = new LinkedHashMap<>();
-        for (Path file : files) {
-            parseErrorsByFile.put(file, new ArrayList<>());
-        }
-
-        for (Path file : ordered) {
-            Resource resource = loadResourceIntoRS(file);
-            if (resource == null) continue;
-            List<ParseError> errs = extractResourceDiagnostics(resource, file.toString());
-            parseErrorsByFile.get(file).addAll(errs);
-        }
-
-        // --- Pass 2: re-process each file via process() for semantic validation ---
+        // Process each file in order via the public API only.
+        // process() registers the file's namespace in the shared ResourceSet,
+        // making it visible to subsequent process() calls that import it.
         Map<Path, ValidationResult> tempResults = new LinkedHashMap<>();
-        for (Path file : ordered) { // Process in topological order
+        for (Path file : ordered) {
             String source;
             try {
                 source = Files.readString(file);
             } catch (IOException e) {
-                tempResults.put(file, new ValidationResult(List.of(), parseErrorsByFile.get(file)));
+                System.err.println("[ERROR] Cannot read '" + file + "': " + e.getMessage());
+                tempResults.put(file, new ValidationResult(List.of(), List.of()));
                 continue;
             }
 
             SysMLInteractiveResult processResult = sysml.process(source);
             List<?> issues = sysml.validate();
-
-            // Merge Pass 1 resource diagnostics with any new errors from process().
-            List<ParseError> parseErrors = new ArrayList<>(parseErrorsByFile.get(file));
-            for (ParseError pe : extractParseErrors(processResult, file.toString())) {
-                if (parseErrors.stream().noneMatch(e -> e.message().equals(pe.message()))) {
-                    parseErrors.add(pe);
-                }
-            }
+            List<ParseError> parseErrors = extractParseErrors(processResult, file.toString());
 
             tempResults.put(file, new ValidationResult(
                 issues != null ? issues : List.of(),
@@ -232,12 +200,9 @@ public class SysMLEngineHelper {
             ));
         }
 
-        // Reorder results to match input order
+        // Return results in original input order.
         Map<Path, ValidationResult> results = new LinkedHashMap<>();
-        for (Path file : files) {
-            results.put(file, tempResults.get(file));
-        }
-
+        for (Path file : files) results.put(file, tempResults.get(file));
         return results;
     }
 
@@ -386,23 +351,6 @@ public class SysMLEngineHelper {
         return parseErrors;
     }
 
-    /**
-     * Harvests parse-level diagnostics directly from a loaded EMF Resource.
-     * Used for Pass 1 errors where files are loaded via loadResourceIntoRS().
-     */
-    private List<ParseError> extractResourceDiagnostics(Resource resource, String displayName) {
-        List<ParseError> result = new ArrayList<>();
-        for (Resource.Diagnostic d : resource.getErrors()) {
-            if (d.getMessage().contains("Couldn't resolve reference to Element")) continue;
-            result.add(new ParseError(
-                String.format("line %d - %s", d.getLine(), d.getMessage()), true));
-        }
-        for (Resource.Diagnostic d : resource.getWarnings()) {
-            result.add(new ParseError(
-                String.format("line %d - %s [warning]", d.getLine(), d.getMessage()), false));
-        }
-        return result;
-    }
 
     // -------------------------------------------------------------------------
     // ResourceSet access
@@ -421,40 +369,6 @@ public class SysMLEngineHelper {
         }
     }
 
-    /**
-     * Loads a SysML file directly into the shared ResourceSet using
-     * URI.createFileURI() so each resource has a real filesystem anchor and
-     * cross-file 'import' statements can be resolved by the linker.
-     *
-     * This is the preferred loading method for batch validation (Pass 1 of
-     * validateAll). Unlike process(String), it preserves the file's URI so
-     * the EMF resource factory registry can resolve relative imports.
-     *
-     * @return the loaded Resource, or null on failure.
-     */
-    public Resource loadResourceIntoRS(Path sysmlFile) {
-        ResourceSet rs = getResourceSet();
-        if (rs == null) return null;
-
-        URI emfUri = URI.createFileURI(sysmlFile.toAbsolutePath().normalize().toString());
-
-        // Return existing resource if already loaded (idempotent).
-        Resource existing = rs.getResource(emfUri, false);
-        if (existing != null) return existing;
-
-        try (InputStream in = Files.newInputStream(sysmlFile)) {
-            Resource resource = rs.createResource(emfUri);
-            if (resource == null) {
-                System.err.println("[ERROR] No resource factory registered for: " + emfUri);
-                return null;
-            }
-            resource.load(in, null);
-            return resource;
-        } catch (IOException e) {
-            System.err.println("[ERROR] Failed to load resource '" + sysmlFile + "': " + e.getMessage());
-            return null;
-        }
-    }
 
     // -------------------------------------------------------------------------
     // Root-element access
@@ -477,18 +391,6 @@ public class SysMLEngineHelper {
         return resource.getContents().get(0);
     }
 
-    // -------------------------------------------------------------------------
-    // Misc helpers
-    // -------------------------------------------------------------------------
-
-    @SuppressWarnings("unchecked")
-    public List<?> getInputResources() {
-        try {
-            return sysml.getInputResources();
-        } catch (Exception e) {
-            return List.of();
-        }
-    }
 
     // -------------------------------------------------------------------------
     // Library auto-detection
