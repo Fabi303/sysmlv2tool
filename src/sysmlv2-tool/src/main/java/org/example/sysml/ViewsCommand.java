@@ -1,157 +1,155 @@
 package org.example.sysml;
 
 import org.eclipse.emf.ecore.EObject;
-import org.omg.sysml.interactive.SysMLInteractiveResult;
+import org.eclipse.emf.ecore.resource.Resource;
 import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
+import static org.example.sysml.FileUtils.*;
+
 /**
- * Lists and renders View/Viewpoint elements from a SysML v2 file.
- * Uses eClass().getName() for type matching — stable across all versions.
+ * Lists View/Viewpoint elements from a SysML v2 file.
+ * 
+ * This command only discovers and displays views defined in the model.
+ * To render views as diagrams, use: diagram <file> --view <viewName>
  */
 @Command(
     name = "views",
     mixinStandardHelpOptions = true,
-    description = "List and render View/Viewpoint elements from a SysML v2 file"
+    description = "List View/Viewpoint elements from a SysML v2 file"
 )
-
 public class ViewsCommand implements Callable<Integer> {
     private final SysMLTool parent;
 
     @Parameters(paramLabel = "<file>", description = ".sysml file to process", arity = "1")
-    private Path sysmlFile;
-
-    @Option(names = {"--render", "-r"}, description = "Render each view to a diagram file")
-    private boolean render;
-
-    @Option(names = {"--view"}, description = "Render only this view (by name)", paramLabel = "<n>")
-    private String viewName;
-
-    @Option(names = {"--format", "-f"}, description = "Output format: png, svg, puml (default: png)",
-        paramLabel = "<fmt>", defaultValue = "png")
-    private String format;
-
-    @Option(names = {"--output", "-o"}, description = "Output directory (default: .)",
-        paramLabel = "<dir>", defaultValue = ".")
-    private Path outputDir;
+     private List<Path> inputs;
 
     public ViewsCommand(SysMLTool parent) {
-    this.parent = parent;
+        this.parent = parent;
     }
 
     @Override
-    public Integer call() {
-        String fmt = format.toLowerCase();
-        if (!fmt.equals("png") && !fmt.equals("svg") && !fmt.equals("puml")) {
-            System.err.println("[ERROR] --format must be: png, svg, or puml");
-            return 2;
-        }
-
+     public Integer call() {
         SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
 
-        System.out.printf("%n%s%n  Views in: %s%n%s%n",
-            "─".repeat(60), sysmlFile, "─".repeat(60));
+        // Collect all input files (expand directories)
+        Set<Path> uniqueFiles = new LinkedHashSet<>();
+        int scanErrors = 0;
 
-        // try {
-        //     engine.process(sysmlFile);
-        //     long errorCount = engine.validate().stream()
-        //         .filter(i -> { try { Object s = i.getClass().getMethod("getSeverity").invoke(i);
-        //             return s != null && s.toString().toUpperCase().contains("ERROR"); }
-        //             catch (Exception ex) { return true; } })
-        //         .count();
-        //     if (errorCount > 0) {
-        //         System.err.printf("[ERROR] %d validation error(s) — fix before rendering views.%n", errorCount);
-        //         return 1;
-        //     }
-        // } catch (Exception e) {
-        //     System.err.printf("[ERROR] Parse failed: %s%n", e.getMessage());
-        //     return 2;
-        // }
+        for (Path input : inputs) {
+            if (!Files.exists(input)) {
+                System.err.printf("  [x] Path not found: %s%n", input);
+                scanErrors++;
+                continue;
+            }
+            if (Files.isDirectory(input)) {
+                List<Path> found = collectSysmlFiles(input);
+                if (found.isEmpty()) {
+                    System.err.printf("  [!] No .sysml files found under: %s%n", input);
+                } else {
+                    System.out.printf("[INFO] Found %d .sysml file(s) under: %s%n", found.size(), input);
+                    uniqueFiles.addAll(found);
+                }
+            } else {
+                uniqueFiles.add(input);
+            }
+        }
 
-        // EObject root = engine.getRootElement();
-        // if (root == null) {
-        //     System.err.println("[ERROR] No root element.");
-        //     return 1;
-        // }
+        if (uniqueFiles.isEmpty()) {
+            return scanErrors > 0 ? 1 : 0;
+        }
 
-        // List<EObject> viewDefs   = new ArrayList<>();
-        // List<EObject> viewUsages = new ArrayList<>();
-        // collectViews(root, viewDefs, viewUsages);
+        System.out.printf("%n%s%n  Loading %d files%n%s%n",
+            "─".repeat(60), uniqueFiles.size(), "─".repeat(60));
 
-        // System.out.printf("  Found %d ViewDefinition(s), %d ViewUsage(s)%n%n",
-        //     viewDefs.size(), viewUsages.size());
 
-        // if (viewDefs.isEmpty() && viewUsages.isEmpty()) {
-        //     System.out.println("  No views defined in this file.");
-        //     System.out.println("  Define views like:");
-        //     System.out.println("    view def MyView { ... }");
-        //     System.out.println("    view myView : MyView { expose ... }");
-        //     return 0;
-        // }
+        // Convert to list after deduplication
+        List<Path> files = new ArrayList<>(uniqueFiles);
 
-        // if (!viewDefs.isEmpty()) {
-        //     System.out.println("  ViewDefinitions:");
-        //     for (EObject vd : viewDefs) {
-        //         System.out.printf("    • %s%n", DiagramCommand.getEObjectName(vd));
-        //         listChildren(vd, "        ");
-        //     }
-        //     System.out.println();
-        // }
+        // Load and validate all files (supports cross-file references)
+        Map<Path, SysMLEngineHelper.ValidationResult> results = engine.validateAll(files);
 
-        // if (!viewUsages.isEmpty()) {
-        //     System.out.println("  ViewUsages:");
-        //     for (EObject vu : viewUsages) {
-        //         System.out.printf("    • %s%s%n",
-        //             DiagramCommand.getEObjectName(vu), getTypeAnnotation(vu));
-        //         listChildren(vu, "        ");
-        //     }
-        //     System.out.println();
-        // }
+        // Check for validation errors
+        boolean hasErrors = false;
+        for (Map.Entry<Path, SysMLEngineHelper.ValidationResult> entry : results.entrySet()) {
+            Path file = entry.getKey();
+            SysMLEngineHelper.ValidationResult result = entry.getValue();
+            
+            long errorCount = result.parseErrors().stream()
+                .filter(SysMLEngineHelper.ParseError::isError).count()
+                + result.issues().stream()
+                .filter(SysMLEngineHelper::isErrorSeverity).count();
 
-        // if (!render && viewName == null) {
-        //     System.out.println("  Use --render to generate diagrams, or --view <n> --render for one view.");
-        //     return 0;
-        // }
+            if (errorCount > 0) {
+                System.err.printf("[ERROR] %d validation error(s) in %s — views may be incomplete%n",
+                    errorCount, file.getFileName());
+                for (SysMLEngineHelper.ParseError pe : result.parseErrors()) {
+                    if (pe.isError()) System.err.printf("  [x] %s%n", pe.message());
+                }
+                hasErrors = true;
+                scanErrors++;
+            }
+        }
 
-        // try { Files.createDirectories(outputDir); }
-        // catch (Exception e) {
-        //     System.err.printf("[ERROR] Cannot create %s%n", outputDir);
-        //     return 2;
-        // }
+        // Collect views from all loaded roots
+        List<EObject> viewDefs   = new ArrayList<>();
+        List<EObject> viewUsages = new ArrayList<>();
+        
+        for (Resource resource : engine.getResourceSet().getResources()) {
+            if (resource.getURI().toString().contains("sysml.library")) continue;
+            if (resource.getContents().isEmpty()) continue;
+            
+            EObject root = resource.getContents().get(0);
+            collectViews(root, viewDefs, viewUsages);
+        }
 
-        // int rendered = 0, errors = 0;
-        // List<EObject> targets = viewUsages.isEmpty() ? viewDefs : viewUsages;
-        // for (EObject target : targets) {
-        //     String name = DiagramCommand.getEObjectName(target);
-        //     if (viewName != null && !viewName.equals(name)) continue;
-        //     System.out.printf("  Rendering: %s ...%n", name);
-        //     try {
-        //         renderElement(target, name, fmt);
-        //         rendered++;
-        //     } catch (Exception e) {
-        //         System.err.printf("  [ERROR] %s: %s%n", name, e.getMessage());
-        //         errors++;
-        //     }
-        // }
+        System.out.printf("%n  Found %d ViewDefinition(s), %d ViewUsage(s)%n%n",
+            viewDefs.size(), viewUsages.size());
 
-        // if (rendered > 0)
-        //     System.out.printf("%n  Rendered %d view(s) → %s%n", rendered, outputDir.toAbsolutePath());
-        // else if (viewName != null)
-        //     System.err.printf("%n[WARN]  View '%s' not found.%n", viewName);
+        if (viewDefs.isEmpty() && viewUsages.isEmpty()) {
+            System.out.println("  No views defined in any loaded file.");
+            System.out.println();
+            System.out.println("  Define views like:");
+            System.out.println("    view def MyView { ... }");
+            System.out.println("    view myView : MyView { expose ... }");
+            System.out.println();
+            System.out.println("  To render views as diagrams, use:");
+            System.out.println("    diagram <file> --view <viewName>");
+            return scanErrors > 0 ? 1 : 0;
+        }
 
-        // return errors > 0 ? 1 : 0;
+        if (!viewDefs.isEmpty()) {
+            System.out.println("  ViewDefinitions:");
+            for (EObject vd : viewDefs) {
+                System.out.printf("    • %s%n", DiagramCommand.getEObjectName(vd));
+                listChildren(vd, "        ");
+            }
+            System.out.println();
+        }
 
-        return 0;
+        if (!viewUsages.isEmpty()) {
+            System.out.println("  ViewUsages:");
+            for (EObject vu : viewUsages) {
+                System.out.printf("    • %s%s%n",
+                    DiagramCommand.getEObjectName(vu), getTypeAnnotation(vu));
+                listChildren(vu, "        ");
+            }
+            System.out.println();
+        }
+
+        System.out.println("  To render a view as diagram:");
+        System.out.println("    diagram <path> --view <viewName> -o <output-dir>");
+
+        return scanErrors > 0 ? 1 : 0;
     }
 
     private void collectViews(EObject obj, List<EObject> defs, List<EObject> usages) {
@@ -189,32 +187,5 @@ public class ViewsCommand implements Callable<Integer> {
             }
         } catch (Exception ignored) {}
         return "";
-    }
-
-    private void renderElement(EObject element, String name, String fmt) throws Exception {
-        String puml = DiagramCommand.generatePlantUML(element);
-        if (puml == null || puml.isBlank()) {
-            System.out.printf("[WARN]  Empty visualization for '%s'.%n", name);
-            return;
-        }
-        if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
-
-        String safe = name.replaceAll("[^A-Za-z0-9_\\-]", "_");
-        if (fmt.equals("puml")) {
-            Path out = outputDir.resolve(safe + ".puml");
-            Files.writeString(out, puml, StandardCharsets.UTF_8);
-            System.out.printf("[OK]    %s%n", out);
-        } else {
-            net.sourceforge.plantuml.FileFormat ff =
-                fmt.equals("svg") ? net.sourceforge.plantuml.FileFormat.SVG
-                                  : net.sourceforge.plantuml.FileFormat.PNG;
-            Path out = outputDir.resolve(safe + "." + fmt);
-            try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-                new net.sourceforge.plantuml.SourceStringReader(puml)
-                    .outputImage(baos, new net.sourceforge.plantuml.FileFormatOption(ff));
-                Files.write(out, baos.toByteArray());
-            }
-            System.out.printf("[OK]    %s%n", out);
-        }
     }
 }

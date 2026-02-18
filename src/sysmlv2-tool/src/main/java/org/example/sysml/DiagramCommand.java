@@ -5,16 +5,11 @@ import net.sourceforge.plantuml.FileFormatOption;
 import net.sourceforge.plantuml.SourceStringReader;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
-import org.omg.sysml.lang.sysml.impl.FeatureValueImpl;
 import org.omg.sysml.plantuml.SysML2PlantUMLText;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
@@ -22,17 +17,14 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static org.example.sysml.FileUtils.*;
 
@@ -46,8 +38,11 @@ import static org.example.sysml.FileUtils.*;
  *
  * Usage modes:
  *   diagram <path>                         -- diagram the root element(s)
- *   diagram <path> --element MyPart        -- diagram a specific named element
+ *   diagram <path> --element <name>        -- diagram a specific named element
+ *   diagram <path> --view <name>           -- diagram a specific view (ViewDefinition or ViewUsage)
  *   diagram <path> --all-elements          -- one diagram per top-level element
+ *
+ * Note: --element and --view are mutually exclusive.
  *
  * SysML2PlantUMLText API:
  *   The actual API is sysML2PUML(List<Element>) which takes a list of elements
@@ -68,8 +63,11 @@ public class DiagramCommand implements Callable<Integer> {
     )
     private List<Path> inputs;
 
-    @Option(names = {"--element", "-e"}, description = "Name of element to diagram (default: root)", paramLabel = "<n>")
+    @Option(names = {"--element", "-e"}, description = "Name of element to diagram", paramLabel = "<name>")
     private String elementName;
+
+    @Option(names = {"--view", "-v"}, description = "Name of view (ViewDefinition/ViewUsage) to diagram", paramLabel = "<name>")
+    private String viewName;
 
     @Option(names = {"--all-elements"}, description = "One diagram per top-level owned member")
     private boolean allElements;
@@ -82,18 +80,18 @@ public class DiagramCommand implements Callable<Integer> {
         paramLabel = "<dir>", defaultValue = ".")
     private Path outputDir;
 
-    @Option(names = {"--nostdlib"}, description = "Skip processing standard library resources")
-    private boolean skipStdlib;
-
-
-    private static final int MAX_PLANTUML_SIZE = 65536; // 64KB, PlantUML's practical limit
-
     public DiagramCommand(SysMLTool parent) {
         this.parent = parent;
     }
 
     @Override
     public Integer call() {
+        // Validate mutually exclusive options
+        if (elementName != null && viewName != null) {
+            System.err.println("[ERROR] --element and --view are mutually exclusive.");
+            return 2;
+        }
+
         String fmt = format.toLowerCase();
         if (!fmt.equals("png") && !fmt.equals("svg") && !fmt.equals("puml")) {
             System.err.println("[ERROR] --format must be: png, svg, or puml");
@@ -173,11 +171,7 @@ public class DiagramCommand implements Callable<Integer> {
         try {
             Files.createDirectories(outputDir);
         } catch (IOException e) {
-            if(Files.exists(outputDir)) {
-                System.err.printf("[ERROR] Cannot create '%s' %s%n, a file with the same name exists.", outputDir, e.getMessage());
-            } else {
-                System.err.printf("[ERROR] Cannot create %s: %s%n", outputDir, e.getMessage());
-            }
+            System.err.printf("[ERROR] Cannot create %s: %s%n", outputDir, e);
             return 2;
         }
 
@@ -185,18 +179,9 @@ public class DiagramCommand implements Callable<Integer> {
             // Collect all root elements from loaded resources
             List<EObject> allRoots = new ArrayList<>();
             for (Resource resource : engine.getResourceSet().getResources()) {
-
-                //skip stdlib resources if --nostdlib is set
-                if (skipStdlib && isStandardLibraryResource(resource)) {
-                    String uriString = resource.getURI().toString();
-                    String decodedUri = decodeUri(uriString);
-                    System.out.printf("[INFO] Skipping standard library resource: %s%n", decodedUri );
-                    continue;
-                }
-
+                if (resource.getURI().toString().contains("sysml.library")) continue; // skip stdlib
                 if (!resource.getContents().isEmpty()) {
                     allRoots.add(resource.getContents().get(0));
-
                 }
             }
 
@@ -206,7 +191,9 @@ public class DiagramCommand implements Callable<Integer> {
             }
 
             // Determine what to diagram
-            if (allElements) {
+            if (viewName != null) {
+                return generateView(allRoots, viewName, fmt);
+            } else if (allElements) {
                 return generateAllElements(allRoots, fmt);
             } else if (elementName != null) {
                 return generateNamedElement(allRoots, elementName, fmt);
@@ -223,25 +210,7 @@ public class DiagramCommand implements Callable<Integer> {
         }
     }
 
-    //Helper to decode URIs that may be percent-encoded, for better readability in logs and error messages
-    private static String decodeUri(String uriString) {
-        try {
-            URI uri = new URI(uriString);
-            return URLDecoder.decode(uri.toString(), StandardCharsets.UTF_8);
-        } catch (URISyntaxException e) {
-            return uriString;
-        }
-    }
-
     // ── Diagram generation strategies ────────────────────────────────────────
-
-    //Find any Resource that looks like a standard library
-    private boolean isStandardLibraryResource(Resource resource) {
-        String uriStr = resource.getURI().toString().toLowerCase();
-        return uriStr.contains("sysml.library") || 
-               uriStr.contains("/standard-library") || 
-               uriStr.contains("/library/");
-    }
 
     /**
      * Generate one diagram per root element (one per input file).
@@ -269,11 +238,28 @@ public class DiagramCommand implements Callable<Integer> {
             EObject target = findByName(root, name);
             if (target != null) {
                 writeDiagram(target, name, fmt);
-                System.out.printf("%n  Generated diagram for '%s'%n", name);
+                System.out.printf("%n  Generated diagram for element '%s'%n", name);
                 return 0;
             }
         }
         System.err.printf("[ERROR] Element '%s' not found in any loaded file.%n", name);
+        return 1;
+    }
+
+    /**
+     * Find and diagram a specific view (ViewDefinition or ViewUsage) across all loaded files.
+     */
+    private int generateView(List<EObject> roots, String name, String fmt) throws Exception {
+        for (EObject root : roots) {
+            EObject view = findView(root, name);
+            if (view != null) {
+                writeDiagram(view, name, fmt);
+                System.out.printf("%n  Generated diagram for view '%s'%n", name);
+                return 0;
+            }
+        }
+        System.err.printf("[ERROR] View '%s' not found in any loaded file.%n", name);
+        System.err.println("        Use 'views <file>' to list available views.");
         return 1;
     }
 
@@ -310,43 +296,6 @@ public class DiagramCommand implements Callable<Integer> {
         return skipped > 0 ? 1 : 0;
     }
 
-
-    /**
-    * Extracts a meaningful string representation from a FeatureValueImpl object.
-    * If it's not a FeatureValueImpl, returns the original object's toString().
-    */
-    private static String extractFeatureValue(Object obj) {
-        if (obj instanceof FeatureValueImpl) {
-            FeatureValueImpl feature = (FeatureValueImpl) obj;
-            // Try to get the actual value if available
-            Object value = feature.getValue(); // Hypothetical method
-            if (value != null) {
-                return value.toString();
-            }
-            // Fallback to feature name if available
-            String name = getFeatureName(feature);
-            return name != null ? name : "unknown";
-        }
-        return obj != null ? obj.toString() : "null";
-    }
-
-    /**
-     * Tries to get the name of a feature, handling various possible method names.
-     */
-    private static String getFeatureName(FeatureValueImpl feature) {
-        for (String methodName : new String[]{"getName", "getDeclaredName", "getFeatureName"}) {
-            try {
-                Method m = feature.getClass().getMethod(methodName);
-                Object result = m.invoke(feature);
-                if (result instanceof String s && !s.isBlank()) {
-                    return s;
-                }
-            } catch (Exception ignored) {}
-        }
-        return null;
-    }
-
-
     // ── PlantUML generation ──────────────────────────────────────────────────
 
     private void writeDiagram(EObject element, String name, String fmt) throws Exception {
@@ -355,73 +304,22 @@ public class DiagramCommand implements Callable<Integer> {
             System.out.printf("[WARN]  Empty output for '%s' — skipping.%n", name);
             return;
         }
-        if (puml.length() > MAX_PLANTUML_SIZE) {
-            System.out.printf("[WARN]  Diagram for '%s' is too large (%d chars) — skipping.%n", name, puml.length());
-            return;
-        }
-
         if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
 
         String safe = name.replaceAll("[^A-Za-z0-9_\\-]", "_");
-        Path out = null;
-        int suffix = 0;
-
-        // If the file already exists, append a numeric suffix to avoid overwriting
-        while (true) {
-                String filename = suffix > 0 
-                    ? safe + "_" + suffix + "." + fmt
-                    : safe + "." + fmt;
-                
-                out = outputDir.resolve(filename);
-                if (Files.notExists(out)) break;
-                suffix++;
-        }
-
-        //Should never happen due to suffix logic, but check just in case
-        if (Files.exists(out)) {
-            System.err.printf("[ERROR] File already exists and cannot be overwritten: %s%n", out);
-            return;
-        }
-
-        // Write to a temp file first, then move to final location to avoid partial files on error
-        Path tempFile = Files.createTempFile(outputDir, safe, ".tmp");
-
         if (fmt.equals("puml")) {
-            Files.writeString(tempFile, puml, StandardCharsets.UTF_8);
+            Path out = outputDir.resolve(safe + ".puml");
+            Files.writeString(out, puml, StandardCharsets.UTF_8);
             System.out.printf("  [OK]  %s%n", out);
         } else {
             FileFormat ff = fmt.equals("svg") ? FileFormat.SVG : FileFormat.PNG;
+            Path out = outputDir.resolve(safe + "." + fmt);
             try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
                 new SourceStringReader(puml).outputImage(baos, new FileFormatOption(ff));
-                Files.write(tempFile, baos.toByteArray());
-            } catch (IOException e) {
-                System.err.printf("[ERROR] Failed to write diagram for '%s': %s%n", name, e.getMessage());
-                return;
+                Files.write(out, baos.toByteArray());
             }
-            finally {
-                Files.move(tempFile, out, StandardCopyOption.REPLACE_EXISTING);
-                Files.deleteIfExists(tempFile);
-                System.out.printf("  [OK]  %s%n", out);
-            }
+            System.out.printf("  [OK]  %s%n", out);
         }
-    }
-
-    /**
-     * Cleans up PlantUML output by replacing FeatureValueImpl references with meaningful values.
-     */
-    private static String cleanFeatureReferences(String puml) {
-        // Replace object references with cleaner format
-        String cleaned = puml.replaceAll("org\\.omg\\.sysml\\.lang\\.sysml\\.impl\\.FeatureValueImpl@[0-9a-f]+", "unknown value");
-        
-        // Remove redundant null declarations
-        cleaned = cleaned.replaceAll("\\(aliasIds: null, declaredShortName: null, declaredName: null, isImpliedIncluded: false\\)", "");
-        cleaned = cleaned.replaceAll("\\(isImplied: false\\) \\(memberShortName: null, memberName: null, visibility: public\\) \\(isInitial: false, isDefault: false\\)", "");
-        
-        // Clean up boolean values
-        cleaned = cleaned.replaceAll("true", "yes");
-        cleaned = cleaned.replaceAll("false", "no");
-        
-        return cleaned;
     }
 
     /**
@@ -439,12 +337,6 @@ public class DiagramCommand implements Callable<Integer> {
             if (String.class.equals(m.getReturnType())) {
                 List<Object> elements = List.of(element);
                 Object result = m.invoke(viz, elements);
-
-                // Clean up the result if it contains object references
-                if (result != null && result.toString().contains("FeatureValueImpl")) {
-                    return cleanFeatureReferences(result.toString());
-                }
-
                 return result != null ? result.toString() : null;
             }
         } catch (NoSuchMethodException e) {
@@ -459,11 +351,6 @@ public class DiagramCommand implements Callable<Integer> {
                 Method m = viz.getClass().getMethod(methodName, EObject.class);
                 if (String.class.equals(m.getReturnType())) {
                     Object result = m.invoke(viz, element);
-
-                    // Clean up the result if it contains object references
-                    if (result != null && result.toString().contains("FeatureValueImpl")) {
-                        return cleanFeatureReferences(result.toString());
-                    }
                     return result != null ? result.toString() : null;
                 }
             } catch (NoSuchMethodException ignored) {}
@@ -502,11 +389,28 @@ public class DiagramCommand implements Callable<Integer> {
         throw new IllegalStateException("Cannot instantiate SysML2PlantUMLText");
     }
 
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private EObject findByName(EObject root, String name) {
         if (name.equals(getEObjectName(root))) return root;
         for (EObject child : root.eContents()) {
             EObject found = findByName(child, name);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /**
+     * Find a view (ViewDefinition or ViewUsage) by name.
+     */
+    private EObject findView(EObject root, String name) {
+        String typeName = root.eClass().getName();
+        if ((typeName.equals("ViewDefinition") || typeName.equals("ViewUsage"))
+                && name.equals(getEObjectName(root))) {
+            return root;
+        }
+        for (EObject child : root.eContents()) {
+            EObject found = findView(child, name);
             if (found != null) return found;
         }
         return null;
@@ -524,7 +428,7 @@ public class DiagramCommand implements Callable<Integer> {
         try {
             Method getOwnedMember = root.getClass().getMethod("getOwnedMember");
             Object result = getOwnedMember.invoke(root);
-            if ((null != result) && (result instanceof Iterable<?> it)) {
+            if (result instanceof Iterable<?> it) {
                 for (Object obj : it) {
                     if (obj instanceof EObject eo) members.add(eo);
                 }
