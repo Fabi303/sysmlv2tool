@@ -1,79 +1,74 @@
 package org.example.sysml;
 
+import com.google.inject.Injector;
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.xtext.resource.XtextResourceSet;
+import org.eclipse.xtext.validation.CheckMode;
+import org.eclipse.xtext.validation.IResourceValidator;
+import org.eclipse.xtext.validation.Issue;
 import org.omg.sysml.interactive.SysMLInteractive;
 import org.omg.sysml.interactive.SysMLInteractiveResult;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Wraps SysMLInteractive for parsing, linking, and validation of SysML v2 files.
  *
- * SysMLInteractive exposes these relevant public methods:
+ * BATCH VALIDATION STRATEGY
+ * ==========================
  *
- *   process(String source)   -> SysMLInteractiveResult  (parse + link into internal RS)
- *   validate()               -> List<?>                 (run validators on last processed model)
- *   getResourceSet()         -> ResourceSet             (the shared RS holding library + model)
- *   getRootElement()         -> Element                 (root of the last processed model)
- *   loadLibrary(String path) -> void                    (load the standard library)
+ * SysMLInteractive.loadLibrary() populates two things:
+ *   1. A plain ResourceSetImpl with parsed library Resource objects
+ *   2. A ResourceDescriptionsData index (SysMLUtil.index) used by the Xtext
+ *      scope provider to resolve cross-references by qualified name
  *
- * There is NO link(Resource) or validate(Resource) overload on SysMLInteractive;
- * process(String) is the sole entry point for loading model content.
- *
- * Batch validation strategy
- * -------------------------
- * When validating a set of files together (e.g. an entire directory), all
- * dependencies must already be registered in the shared ResourceSet before the
- * file that imports them is processed, so that cross-namespace references resolve
- * correctly at link time.
- *
- * The Pilot Implementation resolves imports by namespace name (e.g. "import
- * Vehicles::*"), not by file path. It is therefore sufficient to call
- * process(String) for each file in topological dependency order – each call
- * registers the file's namespace in the shared RS, making it visible to
- * subsequent process() calls.
- *
- * Using loadResourceIntoRS() in addition to process() would insert a second,
- * file://-anchored Resource for the same content alongside the synthetic-URI
- * Resource that process() creates internally, causing every model element to
- * appear twice when iterating over the ResourceSet. We therefore rely exclusively
- * on process() and perform a single topological sort to guarantee correct ordering.
+ * For batch validation we build a fresh XtextResourceSet from the injector and:
+ *   Phase 1 — Mirror the already-parsed library Resource objects from
+ *             SysMLInteractive's ResourceSetImpl directly into our XtextResourceSet.
+ *             This avoids re-parsing the library and gives EcoreUtil.resolveAll()
+ *             the EObjects it needs to follow cross-references.
+ *             We also share the library index so the Xtext scope provider resolves
+ *             qualified names like ScalarValues::Boolean.
+ *   Phase 2 — Load user files into the same XtextResourceSet via file:// URIs.
+ *   Phase 3 — EcoreUtil.resolveAll() on user resources only.
+ *   Phase 4 — IResourceValidator.validate() per user resource.
  */
 public class SysMLEngineHelper {
 
     private final SysMLInteractive sysml;
+    private final Injector injector;
+    private final Path resolvedLibraryPath;
 
-    /**
-     * Bundles the result of a validate() call so that callers can inspect both
-     * the validator issue list and any parse-level errors from process() separately.
-     */
+    // -------------------------------------------------------------------------
+    // Records
+    // -------------------------------------------------------------------------
+
     public record ValidationResult(List<?> issues, List<ParseError> parseErrors) {
-        /** True if there are any error-severity issues or parse errors. */
         public boolean hasErrors() {
             return parseErrors.stream().anyMatch(ParseError::isError)
                 || issues.stream().anyMatch(SysMLEngineHelper::isErrorSeverity);
         }
     }
 
-    /** A single error or warning line surfaced from process() or a Resource diagnostic. */
     public record ParseError(String message, boolean isError) {}
 
-    /** Shared severity check used by ValidationResult.hasErrors() and ValidateCommand. */
     static boolean isErrorSeverity(Object issue) {
         try {
             Object sev = issue.getClass().getMethod("getSeverity").invoke(issue);
@@ -83,36 +78,45 @@ public class SysMLEngineHelper {
         return !issue.toString().toLowerCase().contains("warning");
     }
 
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+
     public SysMLEngineHelper(Path libraryPath) {
-        // Initialize Xtext standalone setup if available (required outside Eclipse).
         try {
             Class<?> setupClass = Class.forName("org.omg.sysml.xtext.SysMLStandaloneSetup");
-            Method doSetupMethod = setupClass.getMethod("doSetup");
-            doSetupMethod.invoke(null);
+            setupClass.getMethod("doSetup").invoke(null);
         } catch (Exception e) {
             System.err.println("[DEBUG] Could not initialize Xtext standalone setup: " + e.getMessage());
         }
 
         sysml = SysMLInteractive.getInstance();
 
+        Injector inj = null;
+        try {
+            Field f = findField(sysml, "injector");
+            if (f != null) inj = (Injector) f.get(sysml);
+        } catch (Exception e) {
+            System.err.println("[WARN]  Could not retrieve injector: " + e.getMessage());
+        }
+        injector = inj;
+        debug("Injector: %s", injector != null ? injector.getClass().getName() : "NULL");
+
         Path lib = libraryPath != null ? libraryPath : autoDetectLibrary();
-        if (lib != null) {
-            lib = lib.toAbsolutePath().normalize();
-            String libPath = lib.toString();
-            if (!libPath.endsWith("/") && !libPath.endsWith("\\")) {
+        resolvedLibraryPath = lib != null ? lib.toAbsolutePath().normalize() : null;
+
+        if (resolvedLibraryPath != null) {
+            String libPath = resolvedLibraryPath.toString();
+            if (!libPath.endsWith("/") && !libPath.endsWith("\\"))
                 libPath += System.getProperty("file.separator");
-            }
+
             String loglevel = System.getProperty("sysmlv2.tool.loglevel", "info").toLowerCase();
-            if (loglevel.equals("info")) {
+            if (loglevel.equals("info"))
                 System.out.printf("[INFO]  Loading library: %s%n", libPath);
-            }
+
             PrintStream originalOut = System.out;
-            if (!loglevel.equals("verbose")) {
-                PrintStream devNull = new PrintStream(new OutputStream() {
-                    @Override public void write(int b) {}
-                });
-                System.setOut(devNull);
-            }
+            if (!loglevel.equals("verbose"))
+                System.setOut(new PrintStream(new OutputStream() { @Override public void write(int b) {} }));
             try {
                 sysml.loadLibrary(libPath);
             } finally {
@@ -129,13 +133,6 @@ public class SysMLEngineHelper {
     // Single-file validation
     // -------------------------------------------------------------------------
 
-    /**
-     * Reads a SysML source file, parses and links it via process(String), runs
-     * all validators via validate(), and returns a ValidationResult.
-     *
-     * For multi-file models with imports use {@link #validateAll} instead, so
-     * that all files are in the RS before any individual file is validated.
-     */
     public ValidationResult validate(Path sysmlFile) {
         String source;
         try {
@@ -144,221 +141,176 @@ public class SysMLEngineHelper {
             System.err.println("[ERROR] Cannot read '" + sysmlFile + "': " + e.getMessage());
             return new ValidationResult(List.of(), List.of());
         }
-
         SysMLInteractiveResult result = sysml.process(source);
         List<?> issues = sysml.validate();
-
         List<ParseError> parseErrors = extractParseErrors(result, sysmlFile.toString());
         return new ValidationResult(issues != null ? issues : List.of(), parseErrors);
     }
 
     // -------------------------------------------------------------------------
-    // Batch / directory validation
+    // Batch validation
     // -------------------------------------------------------------------------
 
-    /**
-     * Validates a set of SysML files together so that cross-file imports resolve
-     * correctly.
-     *
-     * <p>Files are topologically sorted by their import declarations so that every
-     * dependency is processed before the file that imports it. Each file is then
-     * loaded exclusively via {@code process(String) + validate()}, the sole public
-     * API entry point on SysMLInteractive. This avoids the duplicate-Resource
-     * problem that arises when {@code loadResourceIntoRS()} is combined with
-     * {@code process()} for the same file.
-     *
-     * @param files list of .sysml files to validate together
-     * @return map from each Path to its ValidationResult, in input order
-     */
     public Map<Path, ValidationResult> validateAll(List<Path> files) {
 
-        // Topologically sort by import declarations so every dependency is
-        // processed before the file that imports it.
-        List<Path> ordered = topologicalSort(files);
+        if (injector == null) {
+            System.err.println("[ERROR] No Guice injector — cannot perform batch validation.");
+            Map<Path, ValidationResult> err = new LinkedHashMap<>();
+            for (Path f : files)
+                err.put(f, new ValidationResult(List.of(),
+                    List.of(new ParseError("Injector unavailable.", true))));
+            return err;
+        }
 
-        // Process each file in order via the public API only.
-        // process() registers the file's namespace in the shared ResourceSet,
-        // making it visible to subsequent process() calls that import it.
-        Map<Path, ValidationResult> tempResults = new LinkedHashMap<>();
-        for (Path file : ordered) {
-            String source;
+        try {
+            XtextResourceSet resourceSet = injector.getInstance(XtextResourceSet.class);
+            IResourceValidator validator = injector.getInstance(IResourceValidator.class);
+            debug("XtextResourceSet: %s", resourceSet.getClass().getName());
+            debug("IResourceValidator: %s", validator.getClass().getName());
+
+            // ===== PHASE 1: Populate XtextResourceSet with library resources =====
+            //
+            // SysMLInteractive.loadLibrary() already parsed all library files into a
+            // plain ResourceSetImpl (SysMLUtil.resourceSet) and built a scope index
+            // (SysMLUtil.index). We reuse both:
+            //
+            // a) Mirror all parsed library Resource objects into our XtextResourceSet.
+            //    This makes their EObjects reachable by EcoreUtil.resolveAll() without
+            //    re-parsing any files.
+            //
+            // b) Share the populated scope index with our XtextResourceSet by installing
+            //    it via setResourceDescriptions() (if available) so that the Xtext scope
+            //    provider resolves qualified names like ScalarValues::Boolean correctly.
+            System.out.println("[INFO] Phase 1: Populating XtextResourceSet from library...");
+
+            ResourceSet sysmlRs = getResourceSet();
+            if (sysmlRs != null) {
+                int mirrored = 0;
+                for (Resource r : new ArrayList<>(sysmlRs.getResources())) {
+                    if (r != null && r.getURI() != null) {
+                        resourceSet.getResources().add(r);
+                        mirrored++;
+                    }
+                }
+                debug("Mirrored %d library resource(s) into XtextResourceSet", mirrored);
+            }
+
+            // Share the scope index so qualified name lookups resolve correctly.
+            Object index = null;
             try {
-                source = Files.readString(file);
-            } catch (IOException e) {
-                System.err.println("[ERROR] Cannot read '" + file + "': " + e.getMessage());
-                tempResults.put(file, new ValidationResult(List.of(), List.of()));
-                continue;
+                Field f = findField(sysml, "index");
+                if (f != null) index = f.get(sysml);
+            } catch (Exception e) {
+                debug("Could not retrieve index field: %s", e.getMessage());
             }
-
-            SysMLInteractiveResult processResult = sysml.process(source);
-            List<?> issues = sysml.validate();
-            List<ParseError> parseErrors = extractParseErrors(processResult, file.toString());
-
-            tempResults.put(file, new ValidationResult(
-                issues != null ? issues : List.of(),
-                parseErrors
-            ));
-        }
-
-        // Return results in original input order.
-        Map<Path, ValidationResult> results = new LinkedHashMap<>();
-        for (Path file : files) results.put(file, tempResults.get(file));
-        return results;
-    }
-
-    // -------------------------------------------------------------------------
-    // Topological sort
-    // -------------------------------------------------------------------------
-
-    // Matches import statements, capturing the root namespace (first segment).
-    // Handles optional public/private visibility prefix.
-    // Examples matched:
-    //   import Foo::*;
-    //   public import Foo::Bar::*;
-    //   private import Foo;
-    private static final Pattern IMPORT_PATTERN =
-        Pattern.compile(
-            "(?:^|\\s)(?:public\\s+|private\\s+)?import\\s+([A-Za-z_][\\w]*)(?:::|[\\s;])",
-            Pattern.MULTILINE);
-
-    // Matches the top-level package or namespace declaration name.
-    // Examples matched:
-    //   package ProjectRequirements {
-    //   namespace Foo {
-    private static final Pattern PACKAGE_PATTERN =
-        Pattern.compile(
-            "(?:^|\\s)(?:package|namespace)\\s+([A-Za-z_][\\w]*)",
-            Pattern.MULTILINE);
-
-    /**
-     * Returns a topologically sorted copy of {@code files} such that every file
-     * that declares a package imported by another file appears before that file.
-     *
-     * Algorithm: Kahn's BFS on a dependency graph built by scanning each file
-     * for its top-level package name and its import statements.
-     *
-     * Files whose imports cannot be resolved within the set (e.g. standard
-     * library references) are treated as having no in-set dependency and are
-     * placed first. Cycles are broken by appending remaining nodes at the end
-     * with a warning.
-     */
-    private List<Path> topologicalSort(List<Path> files) {
-        // Step 1: scan each file for its declared package name and imported roots.
-        Map<Path, String>       declaredPackage = new LinkedHashMap<>();
-        Map<Path, List<String>> importedRoots   = new LinkedHashMap<>();
-
-        for (Path file : files) {
-            String src;
-            try { src = Files.readString(file); }
-            catch (IOException e) { src = ""; }
-
-            Matcher pm = PACKAGE_PATTERN.matcher(src);
-            declaredPackage.put(file, pm.find() ? pm.group(1) : null);
-
-            List<String> imports = new ArrayList<>();
-            Matcher im = IMPORT_PATTERN.matcher(src);
-            while (im.find()) imports.add(im.group(1));
-            importedRoots.put(file, imports);
-        }
-
-        // Step 2: build reverse index: packageName -> Path that declares it.
-        Map<String, Path> packageToFile = new LinkedHashMap<>();
-        for (Map.Entry<Path, String> e : declaredPackage.entrySet()) {
-            if (e.getValue() != null) packageToFile.put(e.getValue(), e.getKey());
-        }
-
-        // Step 3: build in-degree map and dependency sets.
-        // deps.get(consumer) = set of files that consumer depends on (must load first).
-        Map<Path, LinkedHashSet<Path>> deps     = new LinkedHashMap<>();
-        Map<Path, Integer>             inDegree = new LinkedHashMap<>();
-        for (Path f : files) {
-            deps.put(f, new LinkedHashSet<>());
-            inDegree.put(f, 0);
-        }
-        for (Path consumer : files) {
-            for (String imp : importedRoots.get(consumer)) {
-                Path provider = packageToFile.get(imp);
-                if (provider == null || provider.equals(consumer)) continue;
-                if (deps.get(consumer).add(provider)) {
-                    // consumer gains one more prerequisite
-                    inDegree.merge(consumer, 1, Integer::sum);
+            if (index != null) {
+                try {
+                    Method m = findMethod(resourceSet, "setResourceDescriptions", 1);
+                    if (m != null) {
+                        m.invoke(resourceSet, index);
+                        debug("Library scope index installed via setResourceDescriptions()");
+                    } else {
+                        // XtextResourceSet may expose the index differently — try the
+                        // Guice-injected IResourceDescriptions key instead.
+                        debug("setResourceDescriptions() not found; scope resolution via injected index only");
+                    }
+                } catch (Exception e) {
+                    debug("setResourceDescriptions() failed: %s", e.getMessage());
                 }
             }
-        }
+            debug("ResourceSet size after Phase 1: %d", resourceSet.getResources().size());
 
-        // Step 4: Kahn's BFS — start with nodes that have no in-set dependencies.
-        List<Path> queue  = new ArrayList<>();
-        List<Path> result = new ArrayList<>();
-        for (Path f : files) {
-            if (inDegree.getOrDefault(f, 0) == 0) queue.add(f);
-        }
+            // ===== PHASE 2: Load user files =====
+            System.out.printf("[INFO] Phase 2: Loading %d user file(s)...%n", files.size());
 
-        while (!queue.isEmpty()) {
-            Path node = queue.remove(0);
-            result.add(node);
-            // Reduce in-degree of every consumer that depends on this node.
-            for (Path consumer : files) {
-                if (deps.get(consumer).contains(node)) {
-                    int newDeg = inDegree.merge(consumer, -1, Integer::sum);
-                    if (newDeg == 0) queue.add(consumer);
+            Map<Path, Resource>   fileToResource = new LinkedHashMap<>();
+            Map<Path, ParseError> ioErrors       = new LinkedHashMap<>();
+
+            for (Path file : files) {
+                URI uri = URI.createFileURI(file.toAbsolutePath().normalize().toString());
+                try {
+                    Resource resource = resourceSet.getResource(uri, true);
+                    fileToResource.put(file, resource);
+                    debug("  Loaded: %s  errors=%d  warnings=%d  contents=%d",
+                        file.getFileName(),
+                        resource.getErrors().size(),
+                        resource.getWarnings().size(),
+                        resource.getContents().size());
+                } catch (Exception e) {
+                    System.err.printf("[ERROR] Cannot load '%s': %s%n", file, e.getMessage());
+                    ioErrors.put(file, new ParseError("Cannot load file: " + e.getMessage(), true));
                 }
             }
-        }
 
-        // Step 5: handle cycles or missed nodes.
-        if (result.size() < files.size()) {
-            System.err.println("[WARN]  Cycle or unresolved dependency in import graph; "
-                + "appending remaining files in original order.");
-            for (Path f : files) {
-                if (!result.contains(f)) result.add(f);
+            // ===== PHASE 3: Resolve cross-references (user resources only) =====
+            System.out.println("[INFO] Phase 3: Resolving cross-references...");
+            for (Resource r : fileToResource.values()) {
+                if (r == null) continue;
+                debug("  Resolving: %s", r.getURI());
+                for (EObject root : r.getContents())
+                    EcoreUtil.resolveAll(root);
             }
-        }
 
-        if (Boolean.getBoolean("sysml.debug")) {
-            System.out.println("[DEBUG] Topological load order:");
-            for (int i = 0; i < result.size(); i++)
-                System.out.printf("  %d. %s%n", i + 1, result.get(i));
-        }
+            // ===== PHASE 4: Validate =====
+            System.out.printf("[INFO] Phase 4: Validating %d file(s)...%n", files.size());
 
-        return result;
+            Map<Path, ValidationResult> results = new LinkedHashMap<>();
+
+            for (Path file : files) {
+
+                if (ioErrors.containsKey(file)) {
+                    results.put(file, new ValidationResult(List.of(),
+                        List.of(ioErrors.get(file))));
+                    continue;
+                }
+
+                Resource resource = fileToResource.get(file);
+                List<ParseError> parseErrors = new ArrayList<>();
+
+                if (resource == null) {
+                    parseErrors.add(new ParseError("Resource could not be loaded", true));
+                    results.put(file, new ValidationResult(List.of(), parseErrors));
+                    continue;
+                }
+
+                for (Resource.Diagnostic d : resource.getErrors())
+                    parseErrors.add(new ParseError(formatDiag(d, file), true));
+                for (Resource.Diagnostic d : resource.getWarnings())
+                    parseErrors.add(new ParseError(formatDiag(d, file), false));
+
+                List<Issue> issues = new ArrayList<>();
+                try {
+                    List<Issue> raw = validator.validate(resource, CheckMode.ALL, null);
+                    if (raw != null) issues = raw;
+                } catch (Exception e) {
+                    System.err.printf("[WARN]  Validation failed for %s: %s%n",
+                        file.getFileName(), e.getMessage());
+                    if (Boolean.getBoolean("sysml.debug")) e.printStackTrace();
+                }
+
+                debug("  %s: %d parse diag(s), %d validator issue(s)",
+                    file.getFileName(), parseErrors.size(), issues.size());
+
+                results.put(file, new ValidationResult(issues, parseErrors));
+            }
+
+            return results;
+
+        } catch (Exception e) {
+            System.err.printf("[ERROR] Batch validation failed: %s%n", e.getMessage());
+            if (Boolean.getBoolean("sysml.debug")) e.printStackTrace();
+            Map<Path, ValidationResult> fallback = new LinkedHashMap<>();
+            for (Path file : files)
+                fallback.put(file, new ValidationResult(List.of(),
+                    List.of(new ParseError("Batch validation failed: " + e.getMessage(), true))));
+            return fallback;
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Parse error extraction
+    // Helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Converts the string representation of a SysMLInteractiveResult into a list
-     * of ParseError objects, filtering known spurious linker noise.
-     */
-    private List<ParseError> extractParseErrors(SysMLInteractiveResult result, String displayName) {
-        List<ParseError> parseErrors = new ArrayList<>();
-        if (result == null) return parseErrors;
-
-        String resultStr = result.toString();
-        if (resultStr == null || resultStr.isBlank() || resultStr.equals("null")) return parseErrors;
-
-        for (String line : resultStr.split("\\r?\\n")) {
-            if (line.isBlank()) continue;
-            if (line.contains("Couldn't resolve reference to Element")) continue;
-            String low = line.toLowerCase();
-            if (low.contains("error") || low.contains("warning")) {
-                String msg = line.trim().replaceAll("\\b\\d+\\.sysml\\b",
-                        java.util.regex.Matcher.quoteReplacement(displayName));
-                parseErrors.add(new ParseError(msg, low.contains("error")));
-            }
-        }
-        return parseErrors;
-    }
-
-
-    // -------------------------------------------------------------------------
-    // ResourceSet access
-    // -------------------------------------------------------------------------
-
-    /**
-     * Returns the ResourceSet owned by the SysMLInteractive instance.
-     */
     public ResourceSet getResourceSet() {
         try {
             Method m = sysml.getClass().getMethod("getResourceSet");
@@ -369,12 +321,6 @@ public class SysMLEngineHelper {
         }
     }
 
-
-    // -------------------------------------------------------------------------
-    // Root-element access
-    // -------------------------------------------------------------------------
-
-    /** Returns the root element of the model last processed via process(). */
     public EObject getRootElement() {
         try {
             Object el = sysml.getRootElement();
@@ -385,12 +331,79 @@ public class SysMLEngineHelper {
         return null;
     }
 
-    /** Returns the first top-level EObject from the given Resource's content list. */
     public EObject getRootElement(Resource resource) {
         if (resource == null || resource.getContents().isEmpty()) return null;
         return resource.getContents().get(0);
     }
 
+    private static Field findField(Object target, String name) {
+        for (Class<?> cls = target.getClass(); cls != null; cls = cls.getSuperclass()) {
+            try {
+                Field f = cls.getDeclaredField(name);
+                f.setAccessible(true);
+                return f;
+            } catch (NoSuchFieldException ignored) {}
+        }
+        return null;
+    }
+
+    private static Method findMethod(Object target, String name, int paramCount) {
+        for (Class<?> cls = target.getClass(); cls != null; cls = cls.getSuperclass()) {
+            for (Method m : cls.getDeclaredMethods()) {
+                if (m.getName().equals(name) && m.getParameterCount() == paramCount) {
+                    m.setAccessible(true);
+                    return m;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static List<Path> collectSysmlFiles(Path dir) {
+        try (Stream<Path> stream = Files.walk(dir)) {
+            return stream
+                .filter(Files::isRegularFile)
+                .filter(p -> p.toString().endsWith(".sysml"))
+                .sorted()
+                .collect(Collectors.toList());
+        } catch (IOException e) {
+            System.err.println("[WARN]  Could not scan directory " + dir + ": " + e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static void debug(String fmt, Object... args) {
+        if (Boolean.getBoolean("sysml.debug"))
+            System.out.printf("[DEBUG] " + fmt + "%n", args);
+    }
+
+    private String formatDiag(Resource.Diagnostic diag, Path file) {
+        StringBuilder sb = new StringBuilder(diag.getMessage());
+        try {
+            sb.append(" (").append(file.getFileName())
+              .append(" line:").append(diag.getLine())
+              .append(" col:").append(diag.getColumn()).append(")");
+        } catch (Exception ignored) {}
+        return sb.toString();
+    }
+
+    private List<ParseError> extractParseErrors(SysMLInteractiveResult result, String displayName) {
+        List<ParseError> parseErrors = new ArrayList<>();
+        if (result == null) return parseErrors;
+        String resultStr = result.toString();
+        if (resultStr == null || resultStr.isBlank() || resultStr.equals("null")) return parseErrors;
+        for (String line : resultStr.split("\\r?\\n")) {
+            if (line.isBlank()) continue;
+            if (line.contains("Couldn't resolve reference to Element")) continue;
+            String low = line.toLowerCase();
+            if (low.contains("error") || low.contains("warning")) {
+                String msg = line.trim().replaceAll("\\b\\d+\\.sysml\\b",
+                    java.util.regex.Matcher.quoteReplacement(displayName));
+                parseErrors.add(new ParseError(msg, low.contains("error")));
+            }
+        }
+        return parseErrors;
+    }
 
     // -------------------------------------------------------------------------
     // Library auto-detection
@@ -400,9 +413,8 @@ public class SysMLEngineHelper {
         List<Path> candidates = new ArrayList<>();
 
         String env = System.getenv("SYSML_LIBRARY");
-        if (env != null && Files.isDirectory(Path.of(env))) {
+        if (env != null && Files.isDirectory(Path.of(env)))
             candidates.add(Path.of(env));
-        }
 
         candidates.addAll(Arrays.asList(
             Path.of("./src/submodules/SysML-v2-Release/sysml.library"),
