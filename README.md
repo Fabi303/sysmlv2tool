@@ -43,8 +43,11 @@ If the library folder is not detected automatically, it can be supplied using th
 
 java -Dsysml.debug=true -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar validate <path or filename>
 
-Validate a given file or directory containing files, if a directory is given, all files inside the directory including subfolders are loaded 
-into context and validated. This allows for cross file import dependencies.
+Validate a given file or directory containing files, if a directory is given, all files inside the directory including subfolders are loaded into context and validated. This allows for cross file import dependencies.
+
+validate -f --format
+allows the output to be either generated in text format (-f text), which is also the default output.
+the output can also be generated in JUnit xml format for processing in CI pipelines (-f xml).  
 
 0 is returned on successful validation, -1 otherwise.
 
