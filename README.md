@@ -14,15 +14,16 @@ Basic diagram export is also working.
 
 # Usage
 
-## getting help
+## Getting help
 
+get a list of available commands:
+```bash
 java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar --help
-
-To get a list of available command.
-
+```
+Get help on a specific command:
+```bash
 java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar help <command>
-
-Get help on a specific command.
+```
 
 ## Specifying the sysml.library path
 
@@ -42,13 +43,13 @@ If the library folder is not detected automatically, it can be supplied using th
 ## Debugging
 
 You can get some more stdout debug output by enabling it with -Dsysml.debug=true:
-
+```bash
 java -Dsysml.debug=true -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar
-
+```
 ## Validation
-
+```bash
 java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar validate <path or filename>
-
+```
 Validate a given file or directory containing files, if a directory is given, all files inside the directory including subfolders are loaded into context and validated. This allows for cross file import dependencies.
 
 validate -f --format
@@ -60,13 +61,13 @@ the output can also be generated in JUnit xml format for processing in CI pipeli
 ## Diagram generation
 
 ### Usage modes:
- *   diagram <path>                         -- diagram the root element(s)
- *   diagram <path> --element MyPart        -- diagram a specific named element
- *   diagram <path> --all-elements          -- one diagram per top-level element
+ *   diagram &lt;path&gt;                         -- diagram the root element(s)
+ *   diagram &lt;path&gt; --element MyPart        -- diagram a specific named element
+ *   diagram &lt;path&gt; --all-elements          -- one diagram per top-level element
   
 ### Select output file format:
- *   diagram -f svg <path>                  -- Output in svg format
- *   diagram -f png <path>                  -- Output in png format
+ *   diagram -f svg &lt;path&gt;                  -- Output in svg format
+ *   diagram -f png &lt;path&gt;                  -- Output in png format
    
   by default, puml is generated (not extremely useful, because it contains sysmlv2 specific skins)
   png and svg is also supported and can be selected using "--format", "-f" after the diagram command.
@@ -83,20 +84,20 @@ To exclude the standard sysmlv2 library imports from being rendered, add --nostd
 ## Views
 
 ### Usage modes:
- *   views <path or file>
+ *   views &lt;path or file&gt;
 
 Lists the defined views from the model and the items they contain:
 
-  ViewUsages:
-    softwareSafetyView : View
-        expose: SWS001 : RequirementCheck
-        expose: TSC001 : RequirementCheck
-    hardwareSafetyView : View
-        expose: HWS001 : RequirementCheck
-        expose: TSC001 : RequirementCheck
+  ViewUsages:\
+    &nbsp;&nbsp;softwareSafetyView : View\
+        &nbsp;&nbsp;&nbsp;&nbsp;expose: SWS001 : RequirementCheck\
+        &nbsp;&nbsp;&nbsp;&nbsp;expose: TSC001 : RequirementCheck\
+    &nbsp;&nbsp;hardwareSafetyView : View\
+        &nbsp;&nbsp;&nbsp;&nbsp;expose: HWS001 : RequirementCheck\
+        &nbsp;&nbsp;&nbsp;&nbsp;expose: TSC001 : RequirementCheck
 
 Views can be rendered as diagrams by using the diagram command:
-diagram <path> --view <viewName> -o <output-dir>
+diagram &lt;path&gt; --view &lt;viewName&gt; -o &lt;output-dir&gt;
 
 # Todo
 
