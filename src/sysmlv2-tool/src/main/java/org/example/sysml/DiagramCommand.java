@@ -20,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -358,6 +359,96 @@ private List<EObject> getExposedElements(EObject view) {
 
     // ── PlantUML generation ──────────────────────────────────────────────────
 
+    /**
+     * Walks the EObject tree and collects every FeatureValue's Java identity hash
+     * mapped to the string extracted from its owned Expression child.
+     * This is used to replace the garbage FeatureValueImpl@hash toString() output
+     * that SysML2PlantUMLText emits instead of the actual literal value.
+     */
+    private static Map<String, String> buildFeatureValueMap(Object target) {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (target instanceof List<?> list) {
+            for (Object el : list)
+                if (el instanceof EObject eo) collectFeatureValues(eo, map);
+        } else if (target instanceof EObject eo) {
+            collectFeatureValues(eo, map);
+        }
+        return map;
+    }
+
+    private static void collectFeatureValues(EObject el, Map<String, String> map) {
+        if ("FeatureValue".equals(el.eClass().getName())) {
+            String hash = Integer.toHexString(el.hashCode());
+            String val = extractValueFromFeatureValue(el);
+            if (val != null) map.put(hash, val);
+        }
+        for (EObject child : el.eContents())
+            collectFeatureValues(child, map);
+    }
+
+    /**
+     * Extracts the literal value string from a FeatureValue EObject.
+     * FeatureValue owns its Expression child(ren) as containment; eContents()
+     * returns them. Each expression (LiteralString, LiteralBoolean, etc.) has
+     * a getValue() method returning the actual Java primitive/String.
+     */
+    private static String extractValueFromFeatureValue(EObject fv) {
+        // Primary path: FeatureValue owns the Expression via containment
+        for (EObject child : fv.eContents()) {
+            try {
+                Object val = child.getClass().getMethod("getValue").invoke(child);
+                if (val != null) return String.valueOf(val);
+            } catch (Exception ignored) {}
+        }
+        // Fallback: look for EReference "value" or "ownedRelatedElement"
+        for (EReference ref : fv.eClass().getEAllReferences()) {
+            String rn = ref.getName();
+            if (!"value".equals(rn) && !"ownedRelatedElement".equals(rn)) continue;
+            try {
+                Object obj = fv.eGet(ref);
+                if (obj instanceof java.util.List<?> list) {
+                    for (Object item : list) {
+                        if (!(item instanceof EObject expr)) continue;
+                        try {
+                            Object val = expr.getClass().getMethod("getValue").invoke(expr);
+                            if (val != null) return String.valueOf(val);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    /**
+     * Replaces the garbage FeatureValueImpl@hash toString() emitted by SysML2PlantUMLText
+     * with the actual literal value extracted from the same live EObject.
+     *
+     * SysML2PlantUMLText encodes '=' as {@code <U+003D>} to avoid PlantUML parser
+     * conflicts, so the pattern to match is:
+     *   attrName <U+003D> org.omg.sysml…FeatureValueImpl@1f8d6aa (aliasIds: …)
+     *
+     * The hash in the string is the Java identity hash of the FeatureValue object,
+     * which is the same object we walked in buildFeatureValueMap(), so we can look
+     * up the extracted value by hash.
+     */
+    private static String sanitizePlantUML(String puml, Map<String, String> fvMap) {
+        if (puml == null) return "";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+            "(?:<U\\+003D>|=)\\s*org\\.omg\\.\\S+@([0-9a-fA-F]+)[^\\n]*"
+        ).matcher(puml);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String val = fvMap.getOrDefault(m.group(1), "unknown value");
+            // Empty string values stay as "" so it's clear the field is present but empty
+            String display = val.isEmpty() ? "\"\"" : val;
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(
+                "<U+003D> " + display));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
     private void writeDiagram(Object target, String name, String fmt) throws Exception {
 
         String puml = "";
@@ -368,6 +459,7 @@ private List<EObject> getExposedElements(EObject view) {
         } else {
             throw new IllegalArgumentException("Invalid target type: " + target.getClass());
         }
+        puml = sanitizePlantUML(puml, buildFeatureValueMap(target));
         if (!puml.contains("@startuml")) puml = "@startuml\n" + puml + "\n@enduml\n";
 
         String safe = name.replaceAll("[^A-Za-z0-9_\\-]", "_");
