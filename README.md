@@ -1,7 +1,7 @@
 # sysmlv2-tool
 
 A standalone Java command-line tool to **validate**, and **render views** or **render diagrams**
-from SysML v2 files to puml — using the OMG Pilot Implementation directly.
+from SysML v2 files to puml, svg or png — using the OMG Pilot Implementation directly.
 No API server, no Jupyter, no network required.
 
 Since I am by no means a java developer, this codebase is heavily vibecoded, sometimes with focus to 
@@ -39,9 +39,15 @@ the library is searched for in the following locations:
 
 If the library folder is not detected automatically, it can be supplied using the --libdir parameter on startup.
 
+## Debugging
+
+You can get some more stdout debug output by enabling it with -Dsysml.debug=true:
+
+java -Dsysml.debug=true -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar
+
 ## Validation
 
-java -Dsysml.debug=true -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar validate <path or filename>
+java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar validate <path or filename>
 
 Validate a given file or directory containing files, if a directory is given, all files inside the directory including subfolders are loaded into context and validated. This allows for cross file import dependencies.
 
@@ -74,10 +80,28 @@ diagram --element  MyPartName               -- Render my part.
 
 To exclude the standard sysmlv2 library imports from being rendered, add --nostdlib to the command.
 
+## Views
+
+### Usage modes:
+ *   views <path or file>
+
+Lists the defined views from the model and the items they contain:
+
+  ViewUsages:
+    softwareSafetyView : View
+        expose: SWS001 : RequirementCheck
+        expose: TSC001 : RequirementCheck
+    hardwareSafetyView : View
+        expose: HWS001 : RequirementCheck
+        expose: TSC001 : RequirementCheck
+
+Views can be rendered as diagrams by using the diagram command:
+diagram <path> --view <viewName> -o <output-dir>
+
 # Todo
 
-- Ability to list and render view definitions
 - Write comprehensive build instructions to build this thing
+- Maybe add json output for some functions.
 
 # Building
 
