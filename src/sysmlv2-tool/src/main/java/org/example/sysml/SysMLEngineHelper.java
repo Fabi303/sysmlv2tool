@@ -273,11 +273,10 @@ public class SysMLEngineHelper {
                     continue;
                 }
 
-                for (Resource.Diagnostic d : resource.getErrors())
-                    parseErrors.add(new ParseError(formatDiag(d, file), true));
-                for (Resource.Diagnostic d : resource.getWarnings())
-                    parseErrors.add(new ParseError(formatDiag(d, file), false));
-
+                // Run the semantic validator first, then deduplicate parse diagnostics.
+                // Both resource.getErrors() and IResourceValidator report linker errors
+                // (e.g. "Couldn't resolve reference") — we keep the validator version
+                // and only promote parse diagnostics not already covered by an Issue.
                 List<Issue> issues = new ArrayList<>();
                 try {
                     List<Issue> raw = validator.validate(resource, CheckMode.ALL, null);
@@ -286,6 +285,22 @@ public class SysMLEngineHelper {
                     System.err.printf("[WARN]  Validation failed for %s: %s%n",
                         file.getFileName(), e.getMessage());
                     if (Boolean.getBoolean("sysml.debug")) e.printStackTrace();
+                }
+
+                java.util.Set<String> validatorMessages = new java.util.HashSet<>();
+                for (Issue issue : issues)
+                    if (issue.getMessage() != null)
+                        validatorMessages.add(issue.getMessage().trim());
+
+                for (Resource.Diagnostic d : resource.getErrors()) {
+                    String msg = d.getMessage() != null ? d.getMessage().trim() : "";
+                    if (!validatorMessages.contains(msg))
+                        parseErrors.add(new ParseError(formatDiag(d, file), true));
+                }
+                for (Resource.Diagnostic d : resource.getWarnings()) {
+                    String msg = d.getMessage() != null ? d.getMessage().trim() : "";
+                    if (!validatorMessages.contains(msg))
+                        parseErrors.add(new ParseError(formatDiag(d, file), false));
                 }
 
                 debug("  %s: %d parse diag(s), %d validator issue(s)",
