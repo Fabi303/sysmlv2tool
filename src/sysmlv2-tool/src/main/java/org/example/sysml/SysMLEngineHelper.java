@@ -55,6 +55,7 @@ public class SysMLEngineHelper {
     private final SysMLInteractive sysml;
     private final Injector injector;
     private final Path resolvedLibraryPath;
+    private XtextResourceSet batchResourceSet;
 
     // -------------------------------------------------------------------------
     // Records
@@ -164,6 +165,7 @@ public class SysMLEngineHelper {
 
         try {
             XtextResourceSet resourceSet = injector.getInstance(XtextResourceSet.class);
+            this.batchResourceSet = resourceSet;
             IResourceValidator validator = injector.getInstance(IResourceValidator.class);
             debug("XtextResourceSet: %s", resourceSet.getClass().getName());
             debug("IResourceValidator: %s", validator.getClass().getName());
@@ -334,6 +336,15 @@ public class SysMLEngineHelper {
             System.err.println("[ERROR] Could not retrieve ResourceSet: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Returns the XtextResourceSet built during the last {@link #validateAll} call,
+     * which contains both library resources and the loaded user files.
+     * Returns {@code null} if {@code validateAll} has not been called yet.
+     */
+    public XtextResourceSet getBatchResourceSet() {
+        return batchResourceSet;
     }
 
     public EObject getRootElement() {

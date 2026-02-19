@@ -179,7 +179,9 @@ public class DiagramCommand implements Callable<Integer> {
         try {
             // Collect all root elements from loaded resources
             List<EObject> allRoots = new ArrayList<>();
-            for (Resource resource : engine.getResourceSet().getResources()) {
+            org.eclipse.emf.ecore.resource.ResourceSet activeRs = engine.getBatchResourceSet();
+            if (activeRs == null) activeRs = engine.getResourceSet();
+            for (Resource resource : new ArrayList<>(activeRs.getResources())) {
                 if (resource.getURI().toString().contains("sysml.library")) continue; // skip stdlib
                 if (!resource.getContents().isEmpty()) {
                     allRoots.add(resource.getContents().get(0));
