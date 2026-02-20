@@ -43,6 +43,7 @@ import static org.example.sysml.FileUtils.*;
  *   diagram <path> --element <name>        -- diagram a specific named element
  *   diagram <path> --view <name>           -- diagram a specific view (ViewDefinition or ViewUsage)
  *   diagram <path> --all-elements          -- one diagram per top-level element
+ *   diagram <path> --single               -- one diagram per element, packages become subfolders
  *
  * Note: --element and --view are mutually exclusive.
  *
@@ -74,6 +75,9 @@ public class DiagramCommand implements Callable<Integer> {
     @Option(names = {"--all-elements"}, description = "One diagram per top-level owned member")
     private boolean allElements;
 
+    @Option(names = {"--single", "-s"}, description = "One diagram per element; packages become subfolders under the output directory")
+    private boolean single;
+
     @Option(names = {"--format", "-f"}, description = "Output format: png, svg, puml (default: puml)",
         paramLabel = "<fmt>", defaultValue = "puml")
     private String format;
@@ -91,6 +95,10 @@ public class DiagramCommand implements Callable<Integer> {
         // Validate mutually exclusive options
         if (elementName != null && viewName != null) {
             System.err.println("[ERROR] --element and --view are mutually exclusive.");
+            return 2;
+        }
+        if (single && allElements) {
+            System.err.println("[ERROR] --single and --all-elements are mutually exclusive.");
             return 2;
         }
 
@@ -199,6 +207,8 @@ public class DiagramCommand implements Callable<Integer> {
                 return generateView(allRoots, viewName, fmt);
             } else if (allElements) {
                 return generateAllElements(allRoots, fmt);
+            } else if (single) {
+                return generateSingleFiles(allRoots, fmt);
             } else if (elementName != null) {
                 return generateNamedElement(allRoots, elementName, fmt);
             } else {
@@ -311,7 +321,93 @@ public class DiagramCommand implements Callable<Integer> {
         return skipped > 0 ? 1 : 0;
     }
 
-private List<EObject> getExposedElements(EObject view) {
+    /**
+     * Generate one diagram per named element, mirroring the package hierarchy as subfolders.
+     * Package/LibraryPackage/Namespace elements become directories; all other named elements
+     * become individual diagram files named after the element.
+     */
+    private int generateSingleFiles(List<EObject> roots, String fmt) throws Exception {
+        int[] counts = {0, 0}; // [generated, skipped]
+        // Tracks how many times each base name has been used per directory so that
+        // duplicate contextual names get a numeric suffix (_2, _3, …).
+        Map<Path, Map<String, Integer>> nameCounters = new LinkedHashMap<>();
+        System.out.println("  Generating diagrams (one per element, packages as subfolders)...");
+        for (EObject root : roots) {
+            generateSingleRecursive(root, outputDir, fmt, counts, nameCounters);
+        }
+        System.out.printf("%n  Generated %d diagram(s), skipped %d%n", counts[0], counts[1]);
+        return counts[1] > 0 ? 1 : 0;
+    }
+
+    /**
+     * Recursively walks an element tree.
+     * Named package-like elements (Package, LibraryPackage, Namespace) create a
+     * subdirectory and the walk continues inside it.
+     * Unnamed package-like elements (e.g. the synthetic root Namespace that the
+     * SysML v2 Xtext parser wraps every file in) are treated as transparent: the
+     * walk continues at the same directory level so no hash-named folder appears.
+     * All other named elements produce one diagram file.
+     */
+    private void generateSingleRecursive(EObject element, Path currentDir, String fmt,
+                                         int[] counts, Map<Path, Map<String, Integer>> nameCounters) {
+        String typeName = element.eClass().getName();
+
+        if (isPackageLike(typeName)) {
+            String realName = getRealName(element);
+            if (realName == null) {
+                // Anonymous/synthetic container (e.g. file-root Namespace): recurse
+                // transparently so no hash-named directory appears in the output.
+                for (EObject member : getTopLevelMembers(element)) {
+                    generateSingleRecursive(member, currentDir, fmt, counts, nameCounters);
+                }
+            } else {
+                String safeName = realName.replaceAll("[^A-Za-z0-9_\\-]", "_");
+                Path subDir = currentDir.resolve(safeName);
+                try {
+                    Files.createDirectories(subDir);
+                } catch (IOException e) {
+                    System.err.printf("  [!] Cannot create directory '%s': %s%n", subDir, e.getMessage());
+                    counts[1]++;
+                    return;
+                }
+                for (EObject member : getTopLevelMembers(element)) {
+                    generateSingleRecursive(member, subDir, fmt, counts, nameCounters);
+                }
+            }
+        } else {
+            String baseName  = getContextualName(element);
+            String elementName = uniqueName(baseName, currentDir, nameCounters);
+            try {
+                writeDiagram(element, elementName, fmt, currentDir);
+                counts[0]++;
+            } catch (Exception e) {
+                System.err.printf("  [!] Skipped '%s': %s%n", elementName, e.getMessage());
+                counts[1]++;
+            }
+        }
+    }
+
+    /**
+     * Returns {@code baseName} on its first use within {@code dir}, and
+     * {@code baseName_2}, {@code baseName_3}, … on subsequent uses.
+     * This prevents sibling elements of the same unnamed type (e.g. two Comments
+     * inside the same requirement) from colliding on the same output file.
+     */
+    private static String uniqueName(String baseName, Path dir,
+                                     Map<Path, Map<String, Integer>> nameCounters) {
+        Map<String, Integer> dirMap = nameCounters.computeIfAbsent(dir, k -> new LinkedHashMap<>());
+        int count = dirMap.merge(baseName, 1, Integer::sum);
+        return count == 1 ? baseName : baseName + "_" + count;
+    }
+
+    /** Returns true for element types that should map to a directory rather than a file. */
+    private static boolean isPackageLike(String typeName) {
+        return typeName.equals("Package")
+            || typeName.equals("LibraryPackage")
+            || typeName.equals("Namespace");
+    }
+
+    private List<EObject> getExposedElements(EObject view) {
     List<EObject> elements = new ArrayList<>();
 
     // Iterate through all direct children of the view
@@ -450,6 +546,10 @@ private List<EObject> getExposedElements(EObject view) {
     }
 
     private void writeDiagram(Object target, String name, String fmt) throws Exception {
+        writeDiagram(target, name, fmt, outputDir);
+    }
+
+    private void writeDiagram(Object target, String name, String fmt, Path dir) throws Exception {
 
         String puml = "";
         if (target instanceof List<?> list && !list.isEmpty()) {
@@ -464,12 +564,12 @@ private List<EObject> getExposedElements(EObject view) {
 
         String safe = name.replaceAll("[^A-Za-z0-9_\\-]", "_");
         if (fmt.equals("puml")) {
-            Path out = outputDir.resolve(safe + ".puml");
+            Path out = dir.resolve(safe + ".puml");
             Files.writeString(out, puml, StandardCharsets.UTF_8);
             System.out.printf("  [OK]  %s%n", out);
         } else {
             FileFormat ff = fmt.equals("svg") ? FileFormat.SVG : FileFormat.PNG;
-            Path out = outputDir.resolve(safe + "." + fmt);
+            Path out = dir.resolve(safe + "." + fmt);
             try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
                 new SourceStringReader(puml).outputImage(baos, new FileFormatOption(ff));
                 Files.write(out, baos.toByteArray());
@@ -639,13 +739,46 @@ private List<EObject> getExposedElements(EObject view) {
         return members;
     }
 
-    static String getEObjectName(EObject obj) {
+    /**
+     * Returns the user-defined name of an EObject, or null if it has none.
+     * Used to distinguish real names from synthetic fallback identifiers.
+     */
+    private static String getRealName(EObject obj) {
         for (String m : new String[]{"getName", "getDeclaredName"}) {
             try {
                 Object v = obj.getClass().getMethod(m).invoke(obj);
                 if (v instanceof String s && !s.isBlank()) return s;
             } catch (Exception ignored) {}
         }
-        return obj.eClass().getName() + "_" + Integer.toHexString(obj.hashCode());
+        return null;
+    }
+
+    static String getEObjectName(EObject obj) {
+        String name = getRealName(obj);
+        return name != null ? name : obj.eClass().getName() + "_" + Integer.toHexString(obj.hashCode());
+    }
+
+    /**
+     * Returns a human-readable name for an element in the context of --single output.
+     * If the element has a user-defined name it is returned as-is.
+     * Otherwise the nearest named ancestor (via eContainer chain) is used as a prefix:
+     *   e.g. a Comment inside TSC001 → "TSC001_Comment"
+     *        a Documentation inside TSC001 → "TSC001_Documentation"
+     * If no named ancestor exists the final fallback is "TypeName_hash".
+     */
+    private static String getContextualName(EObject obj) {
+        String realName = getRealName(obj);
+        if (realName != null) return realName;
+
+        String typeName = obj.eClass().getName();
+        EObject container = obj.eContainer();
+        while (container != null) {
+            String containerName = getRealName(container);
+            if (containerName != null) {
+                return containerName + "_" + typeName;
+            }
+            container = container.eContainer();
+        }
+        return typeName + "_" + Integer.toHexString(obj.hashCode());
     }
 }
