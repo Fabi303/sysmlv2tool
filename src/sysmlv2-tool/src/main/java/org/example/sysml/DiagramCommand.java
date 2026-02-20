@@ -16,19 +16,16 @@ import picocli.CommandLine.Parameters;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.stream.Collectors;
 
 import static org.example.sysml.FileUtils.*;
 import org.example.sysml.Logger.*;
@@ -581,98 +578,17 @@ public class DiagramCommand implements Callable<Integer> {
         }
     }
 
-    /**
-     * Generate PlantUML for a single element using the SysML2PlantUMLText API.
-     * 
-     * The actual API is sysML2PUML(List<Element>) which takes a list of elements.
-     * We wrap single elements in a list for compatibility.
-     */
-    String generatePlantUML(EObject element) throws Exception {
-        SysML2PlantUMLText viz = createViz();
-
-        // Try the known List-based method first
-        try {
-            Method m = viz.getClass().getMethod("sysML2PUML", List.class);
-            if (String.class.equals(m.getReturnType())) {
-                List<Object> elements = List.of(element);
-                Object result = m.invoke(viz, elements);
-                return result != null ? result.toString() : null;
-            }
-        } catch (NoSuchMethodException e) {
-            // Fall through to legacy single-element methods
-        }
-
-        // Legacy fallback: try single-EObject methods (older pilot versions)
-        for (String methodName : new String[]{
-                "doSwitch", "getPlantUMLString", "getPlantUML", "visualize",
-                "getText", "generate", "toPlantUML", "apply"}) {
-            try {
-                Method m = viz.getClass().getMethod(methodName, EObject.class);
-                if (String.class.equals(m.getReturnType())) {
-                    Object result = m.invoke(viz, element);
-                    return result != null ? result.toString() : null;
-                }
-            } catch (NoSuchMethodException ignored) {}
-        }
-
-        // Last resort: error with available methods
-        System.err.println("[ERROR] No suitable visualization method found on SysML2PlantUMLText.");
-        System.err.println("        Expected: String sysML2PUML(List)");
-        System.err.println("        Available methods:");
-        for (Method m : viz.getClass().getMethods()) {
-            if (m.getDeclaringClass() == Object.class) continue;
-            System.err.printf("          %s %s(%s)%n",
-                m.getReturnType().getSimpleName(),
-                m.getName(),
-                Arrays.stream(m.getParameterTypes())
-                    .map(Class::getSimpleName)
-                    .collect(Collectors.joining(", ")));
-        }
-        throw new UnsupportedOperationException(
-            "Cannot find sysML2PUML(List) method on SysML2PlantUMLText. " +
-            "Check pilot implementation version compatibility.");
+    String generatePlantUML(EObject element) {
+        return createViz().sysML2PUML(List.of(element));
     }
 
-    /**
-     * Generiert PlantUML für mehrere Elemente.
-     */
-    String generatePlantUML(List<?> elements) throws Exception {
-        SysML2PlantUMLText viz = createViz();
+    String generatePlantUML(List<?> elements) {
         List<EObject> elementList = new ArrayList<>();
         for (Object el : elements) {
-            if (el instanceof EObject eo) {
-                elementList.add(eo);
-            }
+            if (el instanceof EObject eo) elementList.add(eo);
         }
         if (elementList.isEmpty()) return "";
-
-        try {
-            // The primary method for batch processing is sysML2PUML(List)
-            Method m = viz.getClass().getMethod("sysML2PUML", List.class);
-            if (String.class.equals(m.getReturnType())) {
-                Object result = m.invoke(viz, elementList);
-                return result != null ? result.toString() : null;
-            }
-            throw new NoSuchMethodException("Method sysML2PUML(List) found, but returns "
-                + m.getReturnType().getSimpleName() + " instead of String");
-
-        } catch (NoSuchMethodException e) {
-            System.err.println("[ERROR] No suitable visualization method found on SysML2PlantUMLText for multiple elements.");
-            System.err.println("        A method 'String sysML2PUML(List)' is required for generating diagrams from views.");
-            System.err.println("        Available methods on " + viz.getClass().getName() + ":");
-            for (Method m : viz.getClass().getMethods()) {
-                if (m.getDeclaringClass() == Object.class) continue;
-                System.err.printf("          - %s %s(%s)%n",
-                    m.getReturnType().getSimpleName(),
-                    m.getName(),
-                    Arrays.stream(m.getParameterTypes())
-                        .map(Class::getSimpleName)
-                        .collect(Collectors.joining(", ")));
-            }
-            throw new UnsupportedOperationException(
-                "Cannot find required 'sysML2PUML(List)' method on SysML2PlantUMLText. " +
-                "Please check pilot implementation version compatibility.", e);
-        }
+        return createViz().sysML2PUML(elementList);
     }
 
     SysML2PlantUMLText createViz() {
@@ -690,9 +606,22 @@ public class DiagramCommand implements Callable<Integer> {
                     bind(SysML2PlantUMLLinkProvider.class).toInstance(new SysML2PlantUMLLinkProvider() {
                         @Override public String getLinkString(EObject eObj) { return null; }
                         @Override public String getText(EObject eObj) {
-                            return (eObj instanceof org.omg.sysml.lang.sysml.Element e)
-                                ? e.getName()
-                                : eObj.toString();
+                            // Literal expressions (LiteralString, LiteralBoolean, etc.) carry
+                            // their value in getValue() as a Java primitive or String.
+                            // FeatureValue.getValue() returns an EObject — skip that case so
+                            // toString() is returned and sanitizePlantUML can clean it up.
+                            try {
+                                Object val = eObj.getClass().getMethod("getValue").invoke(eObj);
+                                if (val != null && !(val instanceof EObject)) return String.valueOf(val);
+                            } catch (Exception ignored) {}
+                            // Named model elements: return their declared name.
+                            if (eObj instanceof org.omg.sysml.lang.sysml.Element e) {
+                                String name = e.getName();
+                                if (name != null && !name.isBlank()) return name;
+                            }
+                            // Fall back to toString() — same as the null-provider path;
+                            // sanitizePlantUML will clean up any FeatureValueImpl@hash output.
+                            return eObj.toString();
                         }
                     });
                 }
@@ -734,23 +663,10 @@ public class DiagramCommand implements Callable<Integer> {
      * that are direct children of the root namespace.
      */
     private List<EObject> getTopLevelMembers(EObject root) {
-        List<EObject> members = new ArrayList<>();
-        
-        // Try to get owned members via reflection (API may vary)
-        try {
-            Method getOwnedMember = root.getClass().getMethod("getOwnedMember");
-            Object result = getOwnedMember.invoke(root);
-            if (result instanceof Iterable<?> it) {
-                for (Object obj : it) {
-                    if (obj instanceof EObject eo) members.add(eo);
-                }
-            }
-        } catch (Exception ignored) {
-            // Fallback: just use direct eContents()
-            members.addAll(root.eContents());
+        if (root instanceof org.omg.sysml.lang.sysml.Namespace ns) {
+            return new ArrayList<>(ns.getOwnedMember());
         }
-        
-        return members;
+        return new ArrayList<>(root.eContents());
     }
 
     /**
