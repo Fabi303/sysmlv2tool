@@ -86,21 +86,22 @@ public class SysMLEngineHelper {
     // -------------------------------------------------------------------------
 
     public SysMLEngineHelper(Path libraryPath) {
-        try {
-            Class<?> setupClass = Class.forName("org.omg.sysml.xtext.SysMLStandaloneSetup");
-            setupClass.getMethod("doSetup").invoke(null);
-        } catch (Exception e) {
-            Logger.debug("Could not initialize Xtext standalone setup: " + e.getMessage());
-        }
+        // createInstance() handles all Xtext/EMF standalone setup internally
+        // (KerMLStandaloneSetup, SysMLxStandaloneSetup, SysMLStandaloneSetup) and
+        // returns a fully Guice-injected SysMLInteractive instance.
+        sysml = SysMLInteractive.createInstance();
 
-        sysml = SysMLInteractive.getInstance();
-
+        // The Guice injector is stored as a private static field on SysMLInteractive
+        // by createInstance(). There is no public getInjector() method, so reflection
+        // is still required — but we target the known static field directly rather than
+        // searching the instance hierarchy.
         Injector inj = null;
         try {
-            Field f = findField(sysml, "injector");
-            if (f != null) inj = (Injector) f.get(sysml);
+            Field f = SysMLInteractive.class.getDeclaredField("injector");
+            f.setAccessible(true);
+            inj = (Injector) f.get(null); // null receiver = static field
         } catch (Exception e) {
-            Logger.warn("Could not retrieve injector: " + e.getMessage());
+            Logger.warn("Could not retrieve injector from SysMLInteractive: " + e.getMessage());
         }
         injector = inj;
         Logger.debug("Injector: %s", injector != null ? injector.getClass().getName() : "NULL");
@@ -334,8 +335,7 @@ public class SysMLEngineHelper {
 
     public ResourceSet getResourceSet() {
         try {
-            Method m = sysml.getClass().getMethod("getResourceSet");
-            return (ResourceSet) m.invoke(sysml);
+            return sysml.getResourceSet();
         } catch (Exception e) {
             Logger.error("Could not retrieve ResourceSet: " + e.getMessage());
             return null;
