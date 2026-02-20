@@ -1,11 +1,14 @@
 package org.example.sysml;
 
+import com.google.inject.AbstractModule;
+import com.google.inject.Injector;
 import net.sourceforge.plantuml.FileFormat;
 import net.sourceforge.plantuml.FileFormatOption;
 import net.sourceforge.plantuml.SourceStringReader;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.resource.Resource;
+import org.omg.sysml.plantuml.SysML2PlantUMLLinkProvider;
 import org.omg.sysml.plantuml.SysML2PlantUMLText;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -13,7 +16,6 @@ import picocli.CommandLine.Parameters;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -59,6 +61,8 @@ import org.example.sysml.Logger.*;
 )
 public class DiagramCommand implements Callable<Integer> {
     private final SysMLTool parent;
+    private Injector injector;
+    private Injector vizInjector;
 
     @Parameters(
         paramLabel = "<path>",
@@ -142,6 +146,7 @@ public class DiagramCommand implements Callable<Integer> {
             "─".repeat(60), files.size(), "─".repeat(60));
 
         SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
+        this.injector = engine.getInjector();
 
         // Load all files into the ResourceSet (either single validate or validateAll)
         Map<Path, SysMLEngineHelper.ValidationResult> results;
@@ -582,7 +587,7 @@ public class DiagramCommand implements Callable<Integer> {
      * The actual API is sysML2PUML(List<Element>) which takes a list of elements.
      * We wrap single elements in a list for compatibility.
      */
-    static String generatePlantUML(EObject element) throws Exception {
+    String generatePlantUML(EObject element) throws Exception {
         SysML2PlantUMLText viz = createViz();
 
         // Try the known List-based method first
@@ -631,7 +636,7 @@ public class DiagramCommand implements Callable<Integer> {
     /**
      * Generiert PlantUML für mehrere Elemente.
      */
-    static String generatePlantUML(List<?> elements) throws Exception {
+    String generatePlantUML(List<?> elements) throws Exception {
         SysML2PlantUMLText viz = createViz();
         List<EObject> elementList = new ArrayList<>();
         for (Object el : elements) {
@@ -670,19 +675,30 @@ public class DiagramCommand implements Callable<Integer> {
         }
     }
 
-    static SysML2PlantUMLText createViz() throws Exception {
-        // Try each constructor, passing null for all args (link provider etc.)
-        Constructor<?>[] ctors = SysML2PlantUMLText.class.getConstructors();
-        if (ctors.length == 0)
-            ctors = SysML2PlantUMLText.class.getDeclaredConstructors();
-        for (Constructor<?> ctor : ctors) {
-            try {
-                ctor.setAccessible(true);
-                Object[] args = new Object[ctor.getParameterCount()]; // all null
-                return (SysML2PlantUMLText) ctor.newInstance(args);
-            } catch (Exception ignored) {}
+    SysML2PlantUMLText createViz() {
+        if (injector == null) {
+            throw new IllegalStateException(
+                "Guice injector unavailable — cannot instantiate SysML2PlantUMLText. " +
+                "SysMLInteractive.createInstance() may have failed during engine initialisation.");
         }
-        throw new IllegalStateException("Cannot instantiate SysML2PlantUMLText");
+        // The SysML Xtext injector does not register SysML2PlantUMLLinkProvider.
+        // Add it via a child injector so all other Xtext/EMF bindings are inherited.
+        if (vizInjector == null) {
+            vizInjector = injector.createChildInjector(new AbstractModule() {
+                @Override
+                protected void configure() {
+                    bind(SysML2PlantUMLLinkProvider.class).toInstance(new SysML2PlantUMLLinkProvider() {
+                        @Override public String getLinkString(EObject eObj) { return null; }
+                        @Override public String getText(EObject eObj) {
+                            return (eObj instanceof org.omg.sysml.lang.sysml.Element e)
+                                ? e.getName()
+                                : eObj.toString();
+                        }
+                    });
+                }
+            });
+        }
+        return vizInjector.getInstance(SysML2PlantUMLText.class);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

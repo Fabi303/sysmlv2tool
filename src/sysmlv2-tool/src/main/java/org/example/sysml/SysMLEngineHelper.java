@@ -131,6 +131,8 @@ public class SysMLEngineHelper {
 
     public SysMLInteractive getSysML() { return sysml; }
 
+    public Injector getInjector() { return injector; }
+
     // -------------------------------------------------------------------------
     // Single-file validation
     // -------------------------------------------------------------------------
