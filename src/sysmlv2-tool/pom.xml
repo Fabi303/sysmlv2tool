@@ -8,13 +8,12 @@
   <parent>
     <groupId>com.example</groupId>
     <artifactId>sysmlv2-root</artifactId>
-    <version>1.0.0</version>
+    <version>${revision}</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
   <groupId>com.example</groupId>
   <artifactId>sysmlv2-tool</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
   <packaging>eclipse-plugin</packaging>
 
   <properties>

@@ -1,20 +1,37 @@
 
 package org.example.sysml;
 
+import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.Properties;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.IVersionProvider;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
 
 @Command(
     name = "sysmlv2-tool",
-    version = "1.0.0",
+    versionProvider = SysMLTool.VersionProvider.class,
     description = "Validate, diagram, and render views from SysML v2 files."
 )
 public class SysMLTool implements Runnable {
+
+    static class VersionProvider implements IVersionProvider {
+        @Override
+        public String[] getVersion() throws Exception {
+            Properties props = new Properties();
+            try (InputStream is = SysMLTool.class.getResourceAsStream("/META-INF/sysmlv2-version.properties")) {
+                if (is != null) {
+                    props.load(is);
+                    return new String[]{ props.getProperty("version", "unknown") };
+                }
+            }
+            return new String[]{ "unknown" };
+        }
+    }
 
     @Spec
     CommandSpec spec;

@@ -11,6 +11,7 @@ name: CI build pipeline
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -43,7 +44,22 @@ jobs:
         path: src/sysmlv2-tool-assembly/target/sysmlv2-tool-fat.jar
         if-no-files-found: error
 
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        JAR_NAME="sysmlv2-tool-fat-${VERSION}.jar"
+        cp src/sysmlv2-tool-assembly/target/sysmlv2-tool-fat.jar "${JAR_NAME}"
+        gh release create "${GITHUB_REF_NAME}" \
+          --title "Release ${GITHUB_REF_NAME}" \
+          --generate-notes \
+          "${JAR_NAME}" \
+          README.md
+
     - name: Update dependency graph
+      if: github.ref == 'refs/heads/main'
       uses: advanced-security/maven-dependency-submission-action@571e99aab1055c2e71a1e2309b9691de18d6b7d6
       with:
         directory: ./src

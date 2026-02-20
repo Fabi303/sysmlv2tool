@@ -3,8 +3,13 @@
 
     <groupId>com.example</groupId>
     <artifactId>sysmlv2-root</artifactId>
-    <version>1.0.0</version>
+    <version>${revision}</version>
     <packaging>pom</packaging>
+
+  <properties>
+    <revision>1.0.0</revision>
+  </properties>
+
       <!-- ══ PlantUML + CLI ════════════════════════════════════════════ -->
   <dependencies>
     <!-- 
