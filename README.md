@@ -64,6 +64,7 @@ the output can also be generated in JUnit xml format for processing in CI pipeli
  *   diagram &lt;path&gt;                         -- diagram the root element(s)
  *   diagram &lt;path&gt; --element MyPart        -- diagram a specific named element
  *   diagram &lt;path&gt; --all-elements          -- one diagram per top-level element
+ *   diagram &lt;path&gt; -s --single             -- generate single diagram files in a folder structure
   
 ### Select output file format:
  *   diagram -f svg &lt;path&gt;                  -- Output in svg format
@@ -76,6 +77,88 @@ the output can also be generated in JUnit xml format for processing in CI pipeli
 
 Specific elements can be rendered by supplying the "-e" "--element" parameter and the elements name.
 diagram --element  MyPartName               -- Render my part.
+
+### Render all elements individually — `--single` / `-s`
+
+The `--single` switch generates **one diagram file per named element** and mirrors the
+SysML package hierarchy as subfolders under the output directory.
+It is the most convenient mode when you want to browse individual diagrams in a file manager
+or feed them into a documentation pipeline.
+
+```bash
+java -jar sysmlv2-tool-fat.jar diagram --single -o out/ test/dependency_test_model/
+```
+
+**Naming rules**
+
+| Element | Result |
+|---|---|
+| `package Foo { … }` | Creates subdirectory `Foo/` |
+| `part myPart { … }`, `requirement TSC001 { … }`, … | Creates `myPart.puml` (or `.svg`/`.png`) in the current directory |
+| Unnamed element (e.g. `doc`, `comment`) | Named after its nearest named ancestor: `TSC001_Documentation.puml` |
+| Two unnamed elements of the same type under the same parent | Numeric suffix: `TSC001_Documentation.puml`, `TSC001_Documentation_2.puml`, … |
+| Synthetic file-root `Namespace` (parser artefact, no user-defined name) | Transparent — no directory is created for it |
+
+**Compatible options**
+
+| Option | Behaviour when combined with `--single` |
+|---|---|
+| `-f` / `--format` | Controls output format (`puml`, `svg`, `png`) for every generated file |
+| `-o` / `--output` | Root of the generated folder tree (default: current directory) |
+| `--single` + `--all-elements` | **Error** — mutually exclusive |
+
+---
+
+**Example**
+
+Given the two files in `test/dependency_test_model/`:
+
+```
+test/dependency_test_model/
+├── req/
+│   └── requirements.sysml        # package ProjectRequirements { … }
+└── system_model.sysml            # package SystemModel { … }
+```
+
+Running:
+
+```bash
+java -jar sysmlv2-tool-fat.jar diagram --single -f svg -o out/ test/dependency_test_model/
+```
+
+produces a folder tree like:
+
+```
+out/
+├── ProjectRequirements/
+│   ├── ProjectRequirements_Documentation.svg    ← unnamed doc on the package
+│   ├── SafetyRequirement.svg
+│   ├── FunctionalSafetyConcept/
+│   │   ├── FunctionalSafetyConcept_Documentation.svg
+│   │   └── FSC001.svg
+│   ├── TechnicalSafetyConcept/
+│   │   ├── TechnicalSafetyConcept_Documentation.svg
+│   │   └── TSC001.svg
+│   ├── SoftwareRequirements/
+│   │   ├── SoftwareRequirements_Documentation.svg
+│   │   └── SWS001.svg
+│   └── HardwareRequirements/
+│       ├── HardwareRequirements_Documentation.svg
+│       └── HWS001.svg
+└── SystemModel/
+    ├── SystemModel_Documentation.svg            ← first doc block on the package
+    ├── SystemModel_Documentation_2.svg          ← second doc block (numeric counter)
+    ├── BatteryControllerDefinition.svg
+    └── Components/
+        ├── Components_Documentation.svg
+        ├── myBatteryController.svg
+        ├── TemperatureMonitor.svg
+        └── ADCInput.svg
+```
+
+`SystemModel_Documentation` and `SystemModel_Documentation_2` illustrate the numeric
+counter: `system_model.sysml` has two consecutive anonymous `doc` blocks at the package
+level which would otherwise map to the same filename.
 
 ### Exclude stdandard lib
 
