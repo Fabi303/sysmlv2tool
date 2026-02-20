@@ -16,13 +16,20 @@ Basic diagram export is also working.
 
 ## Getting help
 
-get a list of available commands:
+Running the tool without any arguments prints full usage and a list of available commands:
 ```bash
-java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar --help
+java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar
 ```
+
 Get help on a specific command:
 ```bash
 java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar help <command>
+```
+
+Print the tool version:
+```bash
+java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar -v
+java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar --version
 ```
 
 ## Specifying the sysml.library path
@@ -160,7 +167,7 @@ out/
 counter: `system_model.sysml` has two consecutive anonymous `doc` blocks at the package
 level which would otherwise map to the same filename.
 
-### Exclude stdandard lib
+### Exclude standard lib
 
 To exclude the standard sysmlv2 library imports from being rendered, add --nostdlib to the command.
 
