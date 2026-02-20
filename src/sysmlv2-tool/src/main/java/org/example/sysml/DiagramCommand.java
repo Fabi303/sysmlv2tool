@@ -29,6 +29,7 @@ import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 import static org.example.sysml.FileUtils.*;
+import org.example.sysml.Logger.*;
 
 /**
  * Generates diagrams using SysML2PlantUMLText from the Pilot Implementation.
@@ -114,17 +115,16 @@ public class DiagramCommand implements Callable<Integer> {
 
         for (Path input : inputs) {
             if (!Files.exists(input)) {
-                System.err.printf("  [x]  Path not found: %s%n", input);
+                Logger.error("  [x]  Path not found: %s%n", input);
                 totalErrors++;
                 continue;
             }
             if (Files.isDirectory(input)) {
                 List<Path> found = collectSysmlFiles(input);
                 if (found.isEmpty()) {
-                    System.err.printf("  [!]  No .sysml files found under: %s%n", input);
+                    Logger.error("  [!]  No .sysml files found under: %s", input.toString().trim());
                 } else {
-                    System.out.printf("[INFO]  Found %d .sysml file(s) under: %s%n",
-                        found.size(), input);
+                    Logger.info("Found %d .sysml file(s) under: %s", found.size(), input.toString().trim());
                     uniqueFiles.addAll(found);
                 }
             } else {
@@ -138,7 +138,7 @@ public class DiagramCommand implements Callable<Integer> {
 
         List<Path> files = new ArrayList<>(uniqueFiles);
 
-        System.out.printf("%n%s%n  Generating diagrams for %d file(s)%n%s%n",
+        Logger.info("%n%s%n  Generating diagrams for %d file(s)%n%s%n",
             "─".repeat(60), files.size(), "─".repeat(60));
 
         SysMLEngineHelper engine = new SysMLEngineHelper(parent.getLibraryPath());
@@ -216,10 +216,8 @@ public class DiagramCommand implements Callable<Integer> {
             }
 
         } catch (Exception e) {
-            System.err.printf("[ERROR] Failed to generate PlantUML: %s%n", e.getMessage());
-            if (Boolean.getBoolean("sysml.debug")) {
-                e.printStackTrace();
-            }
+            Logger.error("Failed to generate PlantUML: %s%n", e.getMessage());
+            Logger.error("Stacktrace: ", e);
             return 1;
         }
     }
@@ -272,14 +270,15 @@ public class DiagramCommand implements Callable<Integer> {
                 List<EObject> exposedElements = getExposedElements(view);
                 
                 if (exposedElements.isEmpty()) {
-                    System.err.printf("[WARN] View '%s' has no exposed elements%n", name);
+                    Logger.warn("View '%s' has no exposed elements%n", name);
                     return 1;
                 }
                 
                 // Diagramm für alle exponierten Elemente generieren
                 writeDiagram(exposedElements, name, fmt);
-                System.out.printf("[INFO] Generated diagram for view '%s' with %d exposed elements%n", 
-                                  name, exposedElements.size());
+                Logger.info("Generated diagram for view '%s' with %d exposed elements%n", 
+                                    name, exposedElements.size());
+            
                 return 0;
             }
         }
@@ -331,7 +330,7 @@ public class DiagramCommand implements Callable<Integer> {
         // Tracks how many times each base name has been used per directory so that
         // duplicate contextual names get a numeric suffix (_2, _3, …).
         Map<Path, Map<String, Integer>> nameCounters = new LinkedHashMap<>();
-        System.out.println("  Generating diagrams (one per element, packages as subfolders)...");
+        System.out.println("Generating diagrams (one per element, packages as subfolders)...");
         for (EObject root : roots) {
             generateSingleRecursive(root, outputDir, fmt, counts, nameCounters);
         }
@@ -436,17 +435,16 @@ public class DiagramCommand implements Callable<Integer> {
                 // Add the actual target element (e.g., a Requirement or Part),
                 // not the Expose membership itself.
                 elements.add(exposedTarget);
-                if (Boolean.getBoolean("sysml.debug")) {
-                    System.out.printf("[DEBUG] View '%s' exposes element: %s%n",
+                Logger.debug("View '%s' exposes element: %s%n",
                         getEObjectName(view), getEObjectName(exposedTarget));
-                }
-            } else if (Boolean.getBoolean("sysml.debug")) {
-                System.err.printf("[DEBUG] Could not find target of '%s' in View '%s'%n",
+                
+            } else {
+                Logger.debug("Could not find target of '%s' in View '%s'%n",
                     getEObjectName(child), getEObjectName(view));
             }
 
         } catch (Exception e) {
-            System.err.printf("[WARN] Could not resolve exposure in view for element %s: %s%n",
+            Logger.warn("Could not resolve exposure in view for element %s: %s%n",
                 getEObjectName(child), e.getMessage());
         }
     }
@@ -566,7 +564,7 @@ public class DiagramCommand implements Callable<Integer> {
         if (fmt.equals("puml")) {
             Path out = dir.resolve(safe + ".puml");
             Files.writeString(out, puml, StandardCharsets.UTF_8);
-            System.out.printf("  [OK]  %s%n", out);
+            System.out.printf(" %s%n", out);
         } else {
             FileFormat ff = fmt.equals("svg") ? FileFormat.SVG : FileFormat.PNG;
             Path out = dir.resolve(safe + "." + fmt);
@@ -574,7 +572,7 @@ public class DiagramCommand implements Callable<Integer> {
                 new SourceStringReader(puml).outputImage(baos, new FileFormatOption(ff));
                 Files.write(out, baos.toByteArray());
             }
-            System.out.printf("  [OK]  %s%n", out);
+            System.out.printf(" %s%n", out);
         }
     }
 

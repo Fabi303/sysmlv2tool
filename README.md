@@ -49,10 +49,20 @@ If the library folder is not detected automatically, it can be supplied using th
 
 ## Debugging
 
-You can get some more stdout debug output by enabling it with -Dsysml.debug=true:
+There are different loglevels available for information and debugging. Logging to stdout can be enabled with
+-Dsysmlv2tool.loglevel=&lt;level&gt;\
 ```bash
-java -Dsysml.debug=true -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar
+java -Dsysmlv2tool.loglevel=debug -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar
 ```
+Available loglevels are
+* debug
+* info
+* warn
+* error
+
+If no loglevel is specified on startup, the default level is warn, which emits warnings and errors.
+
+
 ## Validation
 ```bash
 java -jar sysmlv2-tool-assembly\target\sysmlv2-tool-fat.jar validate <path or filename>

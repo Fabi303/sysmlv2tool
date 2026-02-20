@@ -57,9 +57,10 @@ public class ViewsCommand implements Callable<Integer> {
             if (Files.isDirectory(input)) {
                 List<Path> found = collectSysmlFiles(input);
                 if (found.isEmpty()) {
-                    System.err.printf("  [!] No .sysml files found under: %s%n", input);
+                    System.err.printf("  [!] No .sysml files found under: %s%n", input.toString().trim());
                 } else {
-                    System.out.printf("[INFO] Found %d .sysml file(s) under: %s%n", found.size(), input);
+                    
+                    Logger.info("Found %d .sysml file(s) under: %s", found.size(), input.toString().trim());
                     uniqueFiles.addAll(found);
                 }
             } else {

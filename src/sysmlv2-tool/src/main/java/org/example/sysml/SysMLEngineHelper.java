@@ -28,6 +28,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.example.sysml.Logger.*;
+
 /**
  * Wraps SysMLInteractive for parsing, linking, and validation of SysML v2 files.
  *
@@ -88,7 +90,7 @@ public class SysMLEngineHelper {
             Class<?> setupClass = Class.forName("org.omg.sysml.xtext.SysMLStandaloneSetup");
             setupClass.getMethod("doSetup").invoke(null);
         } catch (Exception e) {
-            System.err.println("[DEBUG] Could not initialize Xtext standalone setup: " + e.getMessage());
+            Logger.debug("Could not initialize Xtext standalone setup: " + e.getMessage());
         }
 
         sysml = SysMLInteractive.getInstance();
@@ -98,10 +100,10 @@ public class SysMLEngineHelper {
             Field f = findField(sysml, "injector");
             if (f != null) inj = (Injector) f.get(sysml);
         } catch (Exception e) {
-            System.err.println("[WARN]  Could not retrieve injector: " + e.getMessage());
+            Logger.warn("Could not retrieve injector: " + e.getMessage());
         }
         injector = inj;
-        debug("Injector: %s", injector != null ? injector.getClass().getName() : "NULL");
+        Logger.debug("Injector: %s", injector != null ? injector.getClass().getName() : "NULL");
 
         Path lib = libraryPath != null ? libraryPath : autoDetectLibrary();
         resolvedLibraryPath = lib != null ? lib.toAbsolutePath().normalize() : null;
@@ -111,12 +113,10 @@ public class SysMLEngineHelper {
             if (!libPath.endsWith("/") && !libPath.endsWith("\\"))
                 libPath += System.getProperty("file.separator");
 
-            String loglevel = System.getProperty("sysmlv2.tool.loglevel", "info").toLowerCase();
-            if (loglevel.equals("info"))
-                System.out.printf("[INFO]  Loading library: %s%n", libPath);
+                Logger.info("Loading library: %s", libPath.toString().trim());
 
             PrintStream originalOut = System.out;
-            if (!loglevel.equals("verbose"))
+            if (!Logger.isDebugEnabled() || Logger.isInfoEnabled())
                 System.setOut(new PrintStream(new OutputStream() { @Override public void write(int b) {} }));
             try {
                 sysml.loadLibrary(libPath);
@@ -124,7 +124,7 @@ public class SysMLEngineHelper {
                 System.setOut(originalOut);
             }
         } else {
-            System.err.println("[WARN]  No standard library found. Use --libdir or set $SYSML_LIBRARY.");
+            Logger.warn("No standard library found. Use --libdir or set $SYSML_LIBRARY.");
         }
     }
 
@@ -139,7 +139,7 @@ public class SysMLEngineHelper {
         try {
             source = Files.readString(sysmlFile);
         } catch (IOException e) {
-            System.err.println("[ERROR] Cannot read '" + sysmlFile + "': " + e.getMessage());
+            Logger.error("Cannot read '" + sysmlFile + "': " + e.getMessage());
             return new ValidationResult(List.of(), List.of());
         }
         SysMLInteractiveResult result = sysml.process(source);
@@ -155,7 +155,7 @@ public class SysMLEngineHelper {
     public Map<Path, ValidationResult> validateAll(List<Path> files) {
 
         if (injector == null) {
-            System.err.println("[ERROR] No Guice injector — cannot perform batch validation.");
+            Logger.error("No Guice injector — cannot perform batch validation.");
             Map<Path, ValidationResult> err = new LinkedHashMap<>();
             for (Path f : files)
                 err.put(f, new ValidationResult(List.of(),
@@ -167,8 +167,8 @@ public class SysMLEngineHelper {
             XtextResourceSet resourceSet = injector.getInstance(XtextResourceSet.class);
             this.batchResourceSet = resourceSet;
             IResourceValidator validator = injector.getInstance(IResourceValidator.class);
-            debug("XtextResourceSet: %s", resourceSet.getClass().getName());
-            debug("IResourceValidator: %s", validator.getClass().getName());
+            Logger.debug("XtextResourceSet: %s", resourceSet.getClass().getName());
+            Logger.debug("IResourceValidator: %s", validator.getClass().getName());
 
             // ===== PHASE 1: Populate XtextResourceSet with library resources =====
             //
@@ -183,8 +183,8 @@ public class SysMLEngineHelper {
             // b) Share the populated scope index with our XtextResourceSet by installing
             //    it via setResourceDescriptions() (if available) so that the Xtext scope
             //    provider resolves qualified names like ScalarValues::Boolean correctly.
-            System.out.println("[INFO] Phase 1: Populating XtextResourceSet from library...");
 
+            Logger.info("Phase 1: Populating XtextResourceSet from library...");
             ResourceSet sysmlRs = getResourceSet();
             if (sysmlRs != null) {
                 int mirrored = 0;
@@ -194,7 +194,7 @@ public class SysMLEngineHelper {
                         mirrored++;
                     }
                 }
-                debug("Mirrored %d library resource(s) into XtextResourceSet", mirrored);
+                Logger.debug("Mirrored %d library resource(s) into XtextResourceSet", mirrored);
             }
 
             // Share the scope index so qualified name lookups resolve correctly.
@@ -203,63 +203,67 @@ public class SysMLEngineHelper {
                 Field f = findField(sysml, "index");
                 if (f != null) index = f.get(sysml);
             } catch (Exception e) {
-                debug("Could not retrieve index field: %s", e.getMessage());
+                Logger.error("Could not retrieve index field: %s", e.getMessage());
             }
             if (index != null) {
                 try {
                     Method m = findMethod(resourceSet, "setResourceDescriptions", 1);
                     if (m != null) {
                         m.invoke(resourceSet, index);
-                        debug("Library scope index installed via setResourceDescriptions()");
+                        Logger.debug("Library scope index installed via setResourceDescriptions()");
                     } else {
                         // XtextResourceSet may expose the index differently — try the
                         // Guice-injected IResourceDescriptions key instead.
-                        debug("setResourceDescriptions() not found; scope resolution via injected index only");
+                        Logger.debug("setResourceDescriptions() not found; scope resolution via injected index only");
                     }
                 } catch (Exception e) {
-                    debug("setResourceDescriptions() failed: %s", e.getMessage());
+                    Logger.error("setResourceDescriptions() failed: %s", e.getMessage());
                 }
             }
-            debug("ResourceSet size after Phase 1: %d", resourceSet.getResources().size());
+            Logger.debug("ResourceSet size after Phase 1: %d", resourceSet.getResources().size());
 
             // ===== PHASE 2: Load user files =====
-            System.out.printf("[INFO] Phase 2: Loading %d user file(s)...%n", files.size());
+            Logger.info("Phase 2: Loading %d user file(s)...", files.size());
 
             Map<Path, Resource>   fileToResource = new LinkedHashMap<>();
             Map<Path, ParseError> ioErrors       = new LinkedHashMap<>();
 
             for (Path file : files) {
                 URI uri = URI.createFileURI(file.toAbsolutePath().normalize().toString());
+                Logger.info(" %s", file.toString().trim());
                 try {
                     Resource resource = resourceSet.getResource(uri, true);
                     fileToResource.put(file, resource);
-                    debug("  Loaded: %s  errors=%d  warnings=%d  contents=%d",
+                    Logger.debug("  Loaded: %s  errors=%d  warnings=%d  contents=%d",
                         file.getFileName(),
                         resource.getErrors().size(),
                         resource.getWarnings().size(),
                         resource.getContents().size());
                 } catch (Exception e) {
-                    System.err.printf("[ERROR] Cannot load '%s': %s%n", file, e.getMessage());
+                    Logger.error("Cannot load '%s': %s%n", file, e.getMessage());
                     ioErrors.put(file, new ParseError("Cannot load file: " + e.getMessage(), true));
                 }
             }
 
             // ===== PHASE 3: Resolve cross-references (user resources only) =====
-            System.out.println("[INFO] Phase 3: Resolving cross-references...");
+            Logger.info("Phase 3: Resolving cross-references...");
+            
             for (Resource r : fileToResource.values()) {
                 if (r == null) continue;
-                debug("  Resolving: %s", r.getURI());
+
+                Logger.debug(" Resolving: %s", r.getURI());
+                
                 for (EObject root : r.getContents())
                     EcoreUtil.resolveAll(root);
             }
 
             // ===== PHASE 4: Validate =====
-            System.out.printf("[INFO] Phase 4: Validating %d file(s)...%n", files.size());
-
+            Logger.info("Phase 4: Validating %d file(s)...", files.size());
+            
             Map<Path, ValidationResult> results = new LinkedHashMap<>();
 
             for (Path file : files) {
-
+                Logger.info(" %s", file.toString().trim());
                 if (ioErrors.containsKey(file)) {
                     results.put(file, new ValidationResult(List.of(),
                         List.of(ioErrors.get(file))));
@@ -284,9 +288,9 @@ public class SysMLEngineHelper {
                     List<Issue> raw = validator.validate(resource, CheckMode.ALL, null);
                     if (raw != null) issues = raw;
                 } catch (Exception e) {
-                    System.err.printf("[WARN]  Validation failed for %s: %s%n",
+                    Logger.warn("Validation failed for %s: %s%n",
                         file.getFileName(), e.getMessage());
-                    if (Boolean.getBoolean("sysml.debug")) e.printStackTrace();
+                    Logger.error("Stacktrace",e);
                 }
 
                 java.util.Set<String> validatorMessages = new java.util.HashSet<>();
@@ -305,7 +309,7 @@ public class SysMLEngineHelper {
                         parseErrors.add(new ParseError(formatDiag(d, file), false));
                 }
 
-                debug("  %s: %d parse diag(s), %d validator issue(s)",
+                Logger.debug("  %s: %d parse diag(s), %d validator issue(s)",
                     file.getFileName(), parseErrors.size(), issues.size());
 
                 results.put(file, new ValidationResult(issues, parseErrors));
@@ -314,8 +318,8 @@ public class SysMLEngineHelper {
             return results;
 
         } catch (Exception e) {
-            System.err.printf("[ERROR] Batch validation failed: %s%n", e.getMessage());
-            if (Boolean.getBoolean("sysml.debug")) e.printStackTrace();
+            Logger.error("Batch validation failed: %s%n", e.getMessage());
+            Logger.error("Stacktrace",e);
             Map<Path, ValidationResult> fallback = new LinkedHashMap<>();
             for (Path file : files)
                 fallback.put(file, new ValidationResult(List.of(),
@@ -333,7 +337,7 @@ public class SysMLEngineHelper {
             Method m = sysml.getClass().getMethod("getResourceSet");
             return (ResourceSet) m.invoke(sysml);
         } catch (Exception e) {
-            System.err.println("[ERROR] Could not retrieve ResourceSet: " + e.getMessage());
+            Logger.error("Could not retrieve ResourceSet: " + e.getMessage());
             return null;
         }
     }
@@ -352,7 +356,7 @@ public class SysMLEngineHelper {
             Object el = sysml.getRootElement();
             if (el instanceof EObject eo) return eo;
         } catch (Exception e) {
-            System.err.println("[WARN]  getRootElement() failed: " + e.getMessage());
+            Logger.warn("getRootElement() failed: " + e.getMessage());
         }
         return null;
     }
@@ -393,14 +397,9 @@ public class SysMLEngineHelper {
                 .sorted()
                 .collect(Collectors.toList());
         } catch (IOException e) {
-            System.err.println("[WARN]  Could not scan directory " + dir + ": " + e.getMessage());
+            Logger.warn("Could not scan directory " + dir + ": " + e.getMessage());
             return List.of();
         }
-    }
-
-    private static void debug(String fmt, Object... args) {
-        if (Boolean.getBoolean("sysml.debug"))
-            System.out.printf("[DEBUG] " + fmt + "%n", args);
     }
 
     private String formatDiag(Resource.Diagnostic diag, Path file) {
@@ -459,13 +458,14 @@ public class SysMLEngineHelper {
             if (Files.isDirectory(path)) {
                 Path marker = path.resolve("Systems Library/SysML.sysml");
                 if (Files.exists(marker)) {
-                    System.out.println("[INFO]  Found library at: " + path);
+
+                    Logger.info("Found library at: " + path.toString().trim());
                     return path;
                 }
             }
         }
 
-        System.out.println("[WARN]  SysML library not found; specify with --libdir or $SYSML_LIBRARY.");
+        Logger.warn("SysML library not found; specify with --libdir or $SYSML_LIBRARY.");
         return null;
     }
 }

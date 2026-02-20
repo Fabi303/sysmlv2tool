@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 
 import static org.example.sysml.FileUtils.*;
+import static org.example.sysml.Logger.*;
 
 /**
  * Validates SysML v2 files using the Pilot Implementation's native API.
@@ -75,18 +76,18 @@ public class ValidateCommand implements Callable<Integer> {
 
         for (Path input : inputs) {
             if (!Files.exists(input)) {
-                System.err.printf("  [x]  Path not found: %s%n", input);
+                Logger.error("  [x]  Path not found: %s%n", input);
                 totalErrors++;
                 continue;
             }
             if (Files.isDirectory(input)) {
                 List<Path> found = collectSysmlFiles(input);
                 if (found.isEmpty()) {
-                    System.err.printf("  [!]  No .sysml files found under: %s%n", input);
+                    Logger.error("  [!]  No .sysml files found under: %s", input.toString().trim());
                 } else {
                     if (!xmlMode) {
-                        System.out.printf("[INFO]  Found %d .sysml file(s) under: %s%n",
-                            found.size(), input);
+                        Logger.info("Found %d .sysml file(s) under: %s",
+                            found.size(), input.toString().trim());
                     }
                     uniqueFiles.addAll(found);
                 }
@@ -185,7 +186,7 @@ public class ValidateCommand implements Callable<Integer> {
             try {
                 writeJUnitXml(fileErrors, fileWarnings);
             } catch (Exception e) {
-                System.err.println("Failed to write JUnit XML: " + e.getMessage());
+                Logger.error("Failed to write JUnit XML: " + e.getMessage());
             }
         }
 

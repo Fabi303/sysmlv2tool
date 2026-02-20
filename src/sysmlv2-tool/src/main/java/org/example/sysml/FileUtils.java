@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.example.sysml.Logger.*;
+
 public class FileUtils {
     /**
      * Recursively collects all *.sysml files under {@code dir}, sorted by path
@@ -23,7 +25,7 @@ public class FileUtils {
                                   .thenComparing(Comparator.naturalOrder()))
                 .collect(Collectors.toList());
         } catch (IOException e) {
-            System.err.println("[ERROR] Failed to scan directory '" + dir + "': " + e.getMessage());
+            Logger.error("Failed to scan directory '" + dir + "': " + e.getMessage());
             return List.of();
         }
     }
