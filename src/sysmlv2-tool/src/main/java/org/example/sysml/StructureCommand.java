@@ -35,8 +35,10 @@ import static org.example.sysml.FileUtils.collectSysmlFiles;
  * serves as a quick dependency/traceability overview.
  *
  * Usage:
- *   structure <path>               -- ASCII tree (default)
- *   structure <path> -f json       -- JSON output
+ *   structure <path>                    -- ASCII tree + relations (default)
+ *   structure <path> -f json            -- JSON output
+ *   structure <path> --relations        -- relations section only (text)
+ *   structure <path> --relations -f json -- relations only (JSON)
  */
 @Command(
     name = "structure",
@@ -62,6 +64,12 @@ public class StructureCommand implements Callable<Integer> {
         paramLabel = "<fmt>"
     )
     private String format;
+
+    @Option(
+        names = {"--relations"},
+        description = "Print only the relations section; omit the element tree"
+    )
+    private boolean relationsOnly;
 
     public StructureCommand(SysMLTool parent) {
         this.parent = parent;
@@ -196,21 +204,23 @@ public class StructureCommand implements Callable<Integer> {
     // ── ASCII rendering ──────────────────────────────────────────────────────
 
     private void printAscii(List<EObject> roots, List<RelationInfo> relations) {
-        for (EObject root : roots) {
-            // Unnamed synthetic file-level namespaces are transparent wrappers;
-            // render their children directly so no "[Namespace]" stub appears.
-            if (root instanceof Namespace && getElementName(root) == null) {
-                List<EObject> topLevel = structuralChildren(root);
-                for (int i = 0; i < topLevel.size(); i++) {
-                    renderAscii(topLevel.get(i), "", i == topLevel.size() - 1, true);
+        if (!relationsOnly) {
+            for (EObject root : roots) {
+                // Unnamed synthetic file-level namespaces are transparent wrappers;
+                // render their children directly so no "[Namespace]" stub appears.
+                if (root instanceof Namespace && getElementName(root) == null) {
+                    List<EObject> topLevel = structuralChildren(root);
+                    for (int i = 0; i < topLevel.size(); i++) {
+                        renderAscii(topLevel.get(i), "", i == topLevel.size() - 1, true);
+                    }
+                } else {
+                    renderAscii(root, "", true, true);
                 }
-            } else {
-                renderAscii(root, "", true, true);
             }
         }
 
         if (!relations.isEmpty()) {
-            System.out.println();
+            if (!relationsOnly) System.out.println(); // blank separator after tree
             System.out.println("Relations:");
             for (RelationInfo rel : relations) {
                 System.out.printf("  %-40s -[%-11s]-> %s%n",
@@ -248,22 +258,23 @@ public class StructureCommand implements Callable<Integer> {
 
     private void printJson(List<EObject> roots, List<RelationInfo> relations) {
         JSONObject output = new JSONObject();
-        JSONArray structure = new JSONArray();
 
-        for (EObject root : roots) {
-            if (root instanceof Namespace && getElementName(root) == null) {
-                // Transparent unnamed wrapper: promote children to the top level
-                for (EObject child : structuralChildren(root)) {
-                    JSONObject node = buildJsonNode(child);
+        if (!relationsOnly) {
+            JSONArray structure = new JSONArray();
+            for (EObject root : roots) {
+                if (root instanceof Namespace && getElementName(root) == null) {
+                    // Transparent unnamed wrapper: promote children to the top level
+                    for (EObject child : structuralChildren(root)) {
+                        JSONObject node = buildJsonNode(child);
+                        if (node != null) structure.put(node);
+                    }
+                } else {
+                    JSONObject node = buildJsonNode(root);
                     if (node != null) structure.put(node);
                 }
-            } else {
-                JSONObject node = buildJsonNode(root);
-                if (node != null) structure.put(node);
             }
+            output.put("structure", structure);
         }
-
-        output.put("structure", structure);
 
         JSONArray rels = new JSONArray();
         for (RelationInfo rel : relations) {

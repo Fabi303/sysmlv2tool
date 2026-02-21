@@ -267,6 +267,51 @@ java -jar sysmlv2-tool-fat.jar structure -f json <path or file>
 }
 ```
 
+### Relations-only output (`--relations`)
+
+The `--relations` flag suppresses the element tree and prints only the flat relations list.
+This is useful for piping into other tools or for a quick traceability check without the
+full document outline.
+
+```bash
+java -jar sysmlv2-tool-fat.jar structure --relations <path or file>
+```
+
+Text output (`-f text`, default):
+
+```
+Relations:
+  TSC001                                   -[dependency  ]-> FSC001
+  SWS001                                   -[dependency  ]-> TSC001
+  HWS001                                   -[dependency  ]-> TSC001
+  BatteryControllerDefinition              -[satisfy     ]-> FSC001
+  BatteryControllerDefinition              -[satisfy     ]-> TSC001
+```
+
+JSON output (`-f json`) — only the `relations` key is emitted; `structure` is omitted:
+
+```bash
+java -jar sysmlv2-tool-fat.jar structure --relations -f json <path or file>
+```
+
+```json
+{
+  "relations": [
+    { "kind": "dependency", "from": "TSC001",  "to": "FSC001" },
+    { "kind": "satisfy",    "from": "BatteryControllerDefinition", "to": "FSC001" }
+  ]
+}
+```
+
+`--relations` combines freely with `-f`:
+
+| Command | Output |
+|---|---|
+| `structure <path>` | tree + relations (text) |
+| `structure <path> -f json` | tree + relations (JSON) |
+| `structure <path> --relations` | relations only (text) |
+| `structure <path> --relations -f json` | relations only (JSON) |
+
 ### Relation kinds
 
 | Keyword in SysML v2 | Kind label in output |

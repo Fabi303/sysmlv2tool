@@ -828,6 +828,115 @@ class TestStructureCommand(unittest.TestCase):
             f"Expected FSC001 or TSC001 as satisfy target; targets found: {tos}",
         )
 
+    # ── --relations flag (text) ───────────────────────────────────────────────
+
+    def test_relations_flag_exits_zero(self):
+        rc, out, err = run_tool("structure", "--relations", DEP_MODEL)
+        self.assertEqual(rc, 0,
+                         fail_msg("structure --relations should exit 0", rc, out, err))
+
+    def test_relations_flag_shows_relations_header(self):
+        rc, out, err = run_tool("structure", "--relations", DEP_MODEL)
+        self.assertIn("Relations:", combined(out, err),
+                      "Expected 'Relations:' header with --relations flag")
+
+    def test_relations_flag_shows_dependency_entries(self):
+        rc, out, err = run_tool("structure", "--relations", DEP_MODEL)
+        self.assertIn("dependency", combined(out, err),
+                      "Expected 'dependency' entries with --relations flag")
+
+    def test_relations_flag_shows_satisfy_entries(self):
+        rc, out, err = run_tool("structure", "--relations", DEP_MODEL)
+        self.assertIn("satisfy", combined(out, err),
+                      "Expected 'satisfy' entries with --relations flag")
+
+    def test_relations_flag_omits_element_tree(self):
+        """--relations must suppress the element tree; no [Package] labels."""
+        rc, out, err = run_tool("structure", "--relations", DEP_MODEL)
+        self.assertNotRegex(combined(out, err), r"\[Package\]",
+                            "--relations output must not contain the element tree")
+
+    def test_relations_flag_omits_package_names_from_tree(self):
+        """Package names must not appear as tree nodes (they can still appear in relation endpoints)."""
+        rc, out, err = run_tool("structure", "--relations", DEP_MODEL)
+        c = combined(out, err)
+        # The tree prints "PackageName [TypeName]"; that pattern must be absent
+        self.assertNotRegex(c, r"ProjectRequirements\s+\[",
+                            "--relations must not print 'ProjectRequirements [...]' tree node")
+        self.assertNotRegex(c, r"SystemModel\s+\[",
+                            "--relations must not print 'SystemModel [...]' tree node")
+
+    def test_relations_flag_combined_with_explicit_text_format(self):
+        """-f text --relations and --relations alone must produce identical output."""
+        rc1, out1, err1 = run_tool("structure", "--relations", DEP_MODEL)
+        rc2, out2, err2 = run_tool("structure", "--relations", "-f", "text", DEP_MODEL)
+        self.assertEqual(rc1, 0)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(out1.strip(), out2.strip(),
+                         "--relations and --relations -f text must produce the same output")
+
+    # ── --relations flag (JSON) ───────────────────────────────────────────────
+
+    def test_relations_flag_json_exits_zero(self):
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        self.assertEqual(rc, 0,
+                         fail_msg("structure --relations -f json should exit 0", rc, out, err))
+
+    def test_relations_flag_json_is_valid_json(self):
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        try:
+            json.loads(out)
+        except json.JSONDecodeError as e:
+            self.fail(f"structure --relations -f json produced invalid JSON: {e}\n"
+                      f"stdout: {out[:400]}")
+
+    def test_relations_flag_json_has_relations_key(self):
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertIn("relations", data,
+                      "--relations JSON must contain 'relations' key")
+
+    def test_relations_flag_json_omits_structure_key(self):
+        """--relations JSON must NOT contain the 'structure' key."""
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertNotIn("structure", data,
+                         "--relations JSON must omit the 'structure' key")
+
+    def test_relations_flag_json_relations_is_array(self):
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertIsInstance(data["relations"], list,
+                              "'relations' in --relations JSON must be an array")
+
+    def test_relations_flag_json_contains_dependency(self):
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        kinds = [r.get("kind") for r in data["relations"]]
+        self.assertIn("dependency", kinds,
+                      "Expected 'dependency' entries in --relations JSON")
+
+    def test_relations_flag_json_contains_satisfy(self):
+        rc, out, err = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        kinds = [r.get("kind") for r in data["relations"]]
+        self.assertIn("satisfy", kinds,
+                      "Expected 'satisfy' entries in --relations JSON")
+
+    def test_relations_flag_json_matches_full_relations(self):
+        """relations from --relations -f json must equal the relations from the full output."""
+        rc1, out1, _ = run_tool("structure", "--relations", "-f", "json", DEP_MODEL)
+        rc2, out2, _ = run_tool("structure", "-f", "json", DEP_MODEL)
+        self.assertEqual(rc1, 0)
+        self.assertEqual(rc2, 0)
+        rels_only  = json.loads(out1)["relations"]
+        rels_full  = json.loads(out2)["relations"]
+        self.assertEqual(
+            sorted(rels_only,  key=lambda r: (r["kind"], r["from"], r["to"])),
+            sorted(rels_full,  key=lambda r: (r["kind"], r["from"], r["to"])),
+            "--relations relations must be identical to those in the full structure output",
+        )
+
     # ── Error handling ────────────────────────────────────────────────────────
 
     def test_unknown_format_rejected(self):
