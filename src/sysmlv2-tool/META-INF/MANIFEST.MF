@@ -1,11 +1,11 @@
 Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-SymbolicName: sysmlv2-tool;singleton:=true
-Bundle-Version: 1.0.0
+Bundle-Version: 1.1.0
 Bundle-Name: SysML v2 CLI Tool
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Bundle-ActivationPolicy: lazy
-Bundle-ClassPath: .,lib/picocli-4.7.5.jar
+Bundle-ClassPath: .,lib/picocli-4.7.5.jar,lib/json-20240303.jar
 Require-Bundle: org.omg.sysml,
  org.omg.sysml.execution,
  org.omg.sysml.interactive,
