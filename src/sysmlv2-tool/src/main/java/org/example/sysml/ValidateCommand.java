@@ -1,6 +1,7 @@
 package org.example.sysml;
 
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.xtext.validation.Issue;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -264,23 +265,16 @@ public class ValidateCommand implements Callable<Integer> {
     }
 
     private String getMessage(Object issue) {
-        String text = null;
-        try {
-            Object v = issue.getClass().getMethod("getMessage").invoke(issue);
-            if (v != null) text = v.toString();
-        } catch (Exception ignored) {}
-
-        if (text == null) text = issue.toString();
-
-        for (String lineMethod : new String[]{"getLineNumber", "getLine"}) {
-            try {
-                Object line = issue.getClass().getMethod(lineMethod).invoke(issue);
-                Object col  = issue.getClass().getMethod("getColumn").invoke(issue);
+        if (issue instanceof Issue i) {
+            String text = i.getMessage() != null ? i.getMessage() : issue.toString();
+            Integer line = i.getLineNumber();
+            Integer col  = i.getColumn();
+            if (line != null && col != null) {
                 return String.format("line %s col %s - %s", line, col, text);
-            } catch (Exception ignored) {}
+            }
+            return text;
         }
-
-        return text;
+        return issue.toString();
     }
 
     private void printTree(EObject obj, int indent) {

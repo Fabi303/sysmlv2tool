@@ -35,14 +35,15 @@ Both DiagramCommand.getExposedElements() and ViewsCommand.listChildren() now cas
 No Class.forName() call exists in the codebase. SysMLEngineHelper uses SysMLInteractive.createInstance(), which handles all Xtext/EMF standalone setup (KerMLStandaloneSetup, SysMLxStandaloneSetup, SysMLStandaloneSetup) internally. This finding was already resolved.
 
 LOW — Acceptable but worth noting
-8. getOwnedMember() reflection with fallback to eContents()
+8. [FIXED] getOwnedMember() reflection with fallback to eContents()
 
-This is done safely — if the method isn't found, eContents() is used. The fallback is semantically reasonable. Still, if the generated model interface has getOwnedMember() as a public method, using it directly would be cleaner.
+DiagramCommand.getTopLevelMembers() now casts to org.omg.sysml.lang.sysml.Namespace and calls ns.getOwnedMember() directly. The reflection was removed as part of the MEDIUM type-dispatch fixes (finding 5). The eContents() fallback remains for non-Namespace elements.
 
-9. getType() reflection in ViewsCommand.getTypeAnnotation()
+9. [FIXED] getType() reflection in ViewsCommand.getTypeAnnotation()
 
-Called silently — returns empty string on failure. Acceptable as decorative information, but worth using the generated accessor if available.
+Now casts to org.omg.sysml.lang.sysml.Feature and calls f.getType() directly (returns EList<Type>). ViewUsage and most other annotated elements extend Feature, so the instanceof check is correct. Returns "" for non-Feature elements (same as before).
 
-10. Issue diagnostics reflection in ValidateCommand
+10. [FIXED] Issue diagnostics reflection in ValidateCommand
 
-Tries getMessage(), getLineNumber()/getLine(), getColumn()
+ValidateCommand.getMessage() now casts to org.eclipse.xtext.validation.Issue and calls getMessage(), getLineNumber(), getColumn() directly — no reflection. SysMLEngineHelper.isErrorSeverity() was fixed in the same pass: now casts to Issue and compares getSeverity() == Severity.ERROR instead of string-matching the toString(). Both SysMLInteractive.validate() and IResourceValidator.validate() return List<Issue>, so the cast is always valid. The Resource.Diagnostic fallback remains for non-Issue diagnostics.
+

@@ -73,10 +73,9 @@ public class SysMLEngineHelper {
     public record ParseError(String message, boolean isError) {}
 
     static boolean isErrorSeverity(Object issue) {
-        try {
-            Object sev = issue.getClass().getMethod("getSeverity").invoke(issue);
-            if (sev != null) return sev.toString().toUpperCase().contains("ERROR");
-        } catch (Exception ignored) {}
+        if (issue instanceof Issue i) {
+            return i.getSeverity() == org.eclipse.xtext.diagnostics.Severity.ERROR;
+        }
         if (issue instanceof Resource.Diagnostic) return true;
         return !issue.toString().toLowerCase().contains("warning");
     }

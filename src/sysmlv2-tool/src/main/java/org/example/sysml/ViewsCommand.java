@@ -3,6 +3,8 @@ package org.example.sysml;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.omg.sysml.lang.sysml.Expose;
+import org.omg.sysml.lang.sysml.Feature;
+import org.omg.sysml.lang.sysml.Type;
 import org.omg.sysml.lang.sysml.ViewDefinition;
 import org.omg.sysml.lang.sysml.ViewUsage;
 import picocli.CommandLine.Command;
@@ -212,16 +214,13 @@ public class ViewsCommand implements Callable<Integer> {
     }
 
     private String getTypeAnnotation(EObject el) {
-        try {
-            Object types = el.getClass().getMethod("getType").invoke(el);
-            if (types instanceof Iterable<?> it) {
-                List<String> names = new ArrayList<>();
-                for (Object t : it) {
-                    if (t instanceof EObject eo) names.add(DiagramCommand.getEObjectName(eo));
-                }
-                if (!names.isEmpty()) return " : " + String.join(", ", names);
+        if (el instanceof Feature f) {
+            List<String> names = new ArrayList<>();
+            for (Type t : f.getType()) {
+                names.add(DiagramCommand.getEObjectName(t));
             }
-        } catch (Exception ignored) {}
+            if (!names.isEmpty()) return " : " + String.join(", ", names);
+        }
         return "";
     }
 }
