@@ -1,0 +1,48 @@
+HIGH — Will silently break on upstream API changes
+1. [FIXED] SysML2PlantUMLText — blind constructor reflection (DiagramCommand.createViz())
+
+createViz() now uses injector.getInstance(SysML2PlantUMLText.class) via the Guice injector. SysML2PlantUMLText is imported directly. No constructor iteration remains.
+
+2. [FIXED] SysML2PlantUMLText — 7-name method fallback chain (DiagramCommand.generatePlantUML())
+
+generatePlantUML() now calls createViz().sysML2PUML(List<EObject>) directly. The fallback chain is gone. The correct API method is documented in the class-level comment.
+
+3. [OPEN] Private field access in SysMLEngineHelper — injector field
+
+setAccessible(true) is still used to read SysMLInteractive's private static injector field (SysMLEngineHelper.java, around line 100). The code comment acknowledges that SysMLInteractive does not expose a public getInjector() method, making this an upstream API gap. The index-field access mentioned originally appears to have been removed. The injector reflection remains the only unresolved HIGH item.
+
+4. [FIXED] getResourceSet() and getRootElement() called via reflection
+
+Both are now called as direct method invocations. Reflection for these methods was removed in commit 8b508f3.
+
+MEDIUM — Breaks on metamodel refactoring
+5. [FIXED] Hardcoded metamodel type names as strings
+
+All eClass().getName().equals/contains() type dispatch replaced with generated model type checks (org.omg.sysml.lang.sysml.*):
+- DiagramCommand.isPackageLike(): uses exact EClass identity via SysMLPackage.eINSTANCE — instanceof cannot be used here because Package/LibraryPackage/Namespace are supertypes of almost every SysML element (Requirements, Parts, etc. all extend Namespace)
+- DiagramCommand.collectFeatureValues(): now uses instanceof FeatureValue
+- DiagramCommand.findView(): now uses instanceof ViewDefinition / ViewUsage
+- DiagramCommand.getExposedElements(): now uses instanceof Expose
+- ViewsCommand.collectViews(): now uses instanceof ViewDefinition / ViewUsage
+- ViewsCommand.listChildren(): now uses instanceof Expose
+
+6. [FIXED] Hardcoded reference name "importedElement" in two places
+
+Both DiagramCommand.getExposedElements() and ViewsCommand.listChildren() now cast to Expose (which extends Import) and call expose.getImportedElement() directly. The EReference loop and string lookup are eliminated.
+
+7. [FIXED] SysMLStandaloneSetup.doSetup() via Class.forName()
+
+No Class.forName() call exists in the codebase. SysMLEngineHelper uses SysMLInteractive.createInstance(), which handles all Xtext/EMF standalone setup (KerMLStandaloneSetup, SysMLxStandaloneSetup, SysMLStandaloneSetup) internally. This finding was already resolved.
+
+LOW — Acceptable but worth noting
+8. getOwnedMember() reflection with fallback to eContents()
+
+This is done safely — if the method isn't found, eContents() is used. The fallback is semantically reasonable. Still, if the generated model interface has getOwnedMember() as a public method, using it directly would be cleaner.
+
+9. getType() reflection in ViewsCommand.getTypeAnnotation()
+
+Called silently — returns empty string on failure. Acceptable as decorative information, but worth using the generated accessor if available.
+
+10. Issue diagnostics reflection in ValidateCommand
+
+Tries getMessage(), getLineNumber()/getLine(), getColumn()

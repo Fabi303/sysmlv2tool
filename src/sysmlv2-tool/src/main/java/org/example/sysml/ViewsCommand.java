@@ -1,8 +1,10 @@
 package org.example.sysml;
 
 import org.eclipse.emf.ecore.EObject;
-import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.resource.Resource;
+import org.omg.sysml.lang.sysml.Expose;
+import org.omg.sysml.lang.sysml.ViewDefinition;
+import org.omg.sysml.lang.sysml.ViewUsage;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
@@ -167,10 +169,9 @@ public class ViewsCommand implements Callable<Integer> {
     }
 
     private void collectViews(EObject obj, Map<String, EObject> defs, Map<String, EObject> usages) {
-        String typeName = obj.eClass().getName();
-        if (typeName.equals("ViewDefinition")) {
+        if (obj instanceof ViewDefinition) {
             defs.put(getQualifiedName(obj), obj);
-        } else if (typeName.equals("ViewUsage")) {
+        } else if (obj instanceof ViewUsage) {
             usages.put(getQualifiedName(obj), obj);
         }
         for (EObject child : obj.eContents()) {
@@ -195,22 +196,10 @@ public class ViewsCommand implements Callable<Integer> {
 
     private void listChildren(EObject el, String indent) {
         for (EObject child : el.eContents()) {
-            String typeName = child.eClass().getName();
-
-            // Handle 'expose' relationships, which are a form of Membership
-            if (typeName.contains("Expose")) {
-                EObject exposedTarget = null;
-                // The actual exposed element is found via the 'importedElement' reference
-                for (EReference ref : child.eClass().getEAllReferences()) {
-                    if ("importedElement".equals(ref.getName())) {
-                        Object target = child.eGet(ref);
-                        if (target instanceof EObject) {
-                            exposedTarget = (EObject) target;
-                            break;
-                        }
-                    }
-                }
-
+            // Handle 'expose' relationships (Expose extends Import)
+            if (child instanceof Expose expose) {
+                // getImportedElement() is the typed API on Import — no string lookup needed.
+                EObject exposedTarget = expose.getImportedElement();
                 if (exposedTarget != null) {
                     System.out.printf("%sexpose: %s%s%n", indent,
                         DiagramCommand.getEObjectName(exposedTarget),

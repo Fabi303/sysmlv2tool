@@ -8,6 +8,12 @@ import net.sourceforge.plantuml.SourceStringReader;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.resource.Resource;
+import org.omg.sysml.lang.sysml.Expose;
+import org.omg.sysml.lang.sysml.FeatureValue;
+import org.omg.sysml.lang.sysml.Namespace;
+import org.omg.sysml.lang.sysml.SysMLPackage;
+import org.omg.sysml.lang.sysml.ViewDefinition;
+import org.omg.sysml.lang.sysml.ViewUsage;
 import org.omg.sysml.plantuml.SysML2PlantUMLLinkProvider;
 import org.omg.sysml.plantuml.SysML2PlantUMLText;
 import picocli.CommandLine.Command;
@@ -351,9 +357,7 @@ public class DiagramCommand implements Callable<Integer> {
      */
     private void generateSingleRecursive(EObject element, Path currentDir, String fmt,
                                          int[] counts, Map<Path, Map<String, Integer>> nameCounters) {
-        String typeName = element.eClass().getName();
-
-        if (isPackageLike(typeName)) {
+        if (isPackageLike(element)) {
             String realName = getRealName(element);
             if (realName == null) {
                 // Anonymous/synthetic container (e.g. file-root Namespace): recurse
@@ -401,37 +405,32 @@ public class DiagramCommand implements Callable<Integer> {
         return count == 1 ? baseName : baseName + "_" + count;
     }
 
-    /** Returns true for element types that should map to a directory rather than a file. */
-    private static boolean isPackageLike(String typeName) {
-        return typeName.equals("Package")
-            || typeName.equals("LibraryPackage")
-            || typeName.equals("Namespace");
+    /**
+     * Returns true for element types that should map to a directory rather than a file.
+     * Uses exact EClass identity (not instanceof) because Package, LibraryPackage, and
+     * Namespace are supertypes of almost every SysML element — instanceof would match
+     * Requirements, Parts, etc. and turn them into directories instead of diagram files.
+     */
+    private static boolean isPackageLike(EObject element) {
+        org.eclipse.emf.ecore.EClass eClass = element.eClass();
+        return eClass == SysMLPackage.eINSTANCE.getPackage()
+            || eClass == SysMLPackage.eINSTANCE.getLibraryPackage()
+            || eClass == SysMLPackage.eINSTANCE.getNamespace();
     }
 
     private List<EObject> getExposedElements(EObject view) {
-    List<EObject> elements = new ArrayList<>();
+        List<EObject> elements = new ArrayList<>();
 
-    // Iterate through all direct children of the view
-    for (EObject child : view.eContents()) {
-        // We are looking for 'Expose' relationships (a type of Membership)
-        if (!child.eClass().getName().contains("Expose")) {
-            continue;
-        }
-
-        try {
-            EObject exposedTarget = null;
-
-            // The target of an Expose relationship is held in the 'importedElement' reference
-            // for this version of the SysML pilot implementation.
-            for (EReference ref : child.eClass().getEAllReferences()) {
-                if ("importedElement".equals(ref.getName())) {
-                    Object target = child.eGet(ref);
-                    if (target instanceof EObject) {
-                        exposedTarget = (EObject) target;
-                        break; // Found it
-                    }
-                }
+        // Iterate through all direct children of the view
+        for (EObject child : view.eContents()) {
+            // We are looking for Expose relationships (a type of Import)
+            if (!(child instanceof Expose expose)) {
+                continue;
             }
+
+            // getImportedElement() is defined on Import (the supertype of Expose)
+            // and returns the element targeted by this expose clause directly.
+            EObject exposedTarget = expose.getImportedElement();
 
             if (exposedTarget != null) {
                 // Add the actual target element (e.g., a Requirement or Part),
@@ -439,19 +438,13 @@ public class DiagramCommand implements Callable<Integer> {
                 elements.add(exposedTarget);
                 Logger.debug("View '%s' exposes element: %s%n",
                         getEObjectName(view), getEObjectName(exposedTarget));
-                
             } else {
                 Logger.debug("Could not find target of '%s' in View '%s'%n",
                     getEObjectName(child), getEObjectName(view));
             }
-
-        } catch (Exception e) {
-            Logger.warn("Could not resolve exposure in view for element %s: %s%n",
-                getEObjectName(child), e.getMessage());
         }
+        return elements;
     }
-    return elements;
-}
 
     // ── PlantUML generation ──────────────────────────────────────────────────
 
@@ -473,7 +466,7 @@ public class DiagramCommand implements Callable<Integer> {
     }
 
     private static void collectFeatureValues(EObject el, Map<String, String> map) {
-        if ("FeatureValue".equals(el.eClass().getName())) {
+        if (el instanceof FeatureValue) {
             String hash = Integer.toHexString(el.hashCode());
             String val = extractValueFromFeatureValue(el);
             if (val != null) map.put(hash, val);
@@ -645,8 +638,7 @@ public class DiagramCommand implements Callable<Integer> {
      * Find a view (ViewDefinition or ViewUsage) by name.
      */
     private EObject findView(EObject root, String name) {
-        String typeName = root.eClass().getName();
-        if ((typeName.equals("ViewDefinition") || typeName.equals("ViewUsage"))
+        if ((root instanceof ViewDefinition || root instanceof ViewUsage)
                 && name.equals(getEObjectName(root))) {
             return root;
         }
@@ -663,7 +655,7 @@ public class DiagramCommand implements Callable<Integer> {
      * that are direct children of the root namespace.
      */
     private List<EObject> getTopLevelMembers(EObject root) {
-        if (root instanceof org.omg.sysml.lang.sysml.Namespace ns) {
+        if (root instanceof Namespace ns) {
             return new ArrayList<>(ns.getOwnedMember());
         }
         return new ArrayList<>(root.eContents());
