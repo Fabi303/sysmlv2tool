@@ -48,6 +48,7 @@ public class SysMLTool implements Runnable {
         cmd.addSubcommand("validate", new ValidateCommand(tool));
         cmd.addSubcommand("diagram", new DiagramCommand(tool));
         cmd.addSubcommand("views", new ViewsCommand(tool));
+        cmd.addSubcommand("structure", new StructureCommand(tool));
         cmd.addSubcommand("help", new CommandLine.HelpCommand());
         int exitCode = cmd.execute(args);
         System.exit(exitCode);

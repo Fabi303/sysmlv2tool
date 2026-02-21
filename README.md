@@ -199,6 +199,88 @@ Lists the defined views from the model and the items they contain:
 Views can be rendered as diagrams by using the diagram command:
 diagram &lt;path&gt; --view &lt;viewName&gt; -o &lt;output-dir&gt;
 
+## Structure
+
+The `structure` command prints the document outline of one or more SysML v2 files.
+It shows the **element hierarchy** (names and metatypes) without any attribute content, documentation bodies, or literal values, and appends a flat **Relations** section listing all named dependency, satisfy, verify, derive, allocate, subset, and redefine links found in the model.
+
+### Usage
+
+```bash
+java -jar sysmlv2-tool-fat.jar structure <path or file>
+```
+
+A directory is scanned recursively; all `.sysml` files are loaded as one batch so that cross-file references resolve correctly.
+
+### Output formats
+
+`-f text` (default) — ASCII tree followed by a Relations section:
+
+```
+ProjectRequirements [Package]
+├── SafetyRequirement [RequirementDefinition]
+├── FunctionalSafetyConcept [Package]
+│   └── FSC001 [RequirementDefinition]
+├── TechnicalSafetyConcept [Package]
+│   └── TSC001 [RequirementDefinition]
+├── SoftwareRequirements [Package]
+│   └── SWS001 [RequirementDefinition]
+└── HardwareRequirements [Package]
+    └── HWS001 [RequirementDefinition]
+SystemModel [Package]
+├── BatteryControllerDefinition [PartDefinition]
+└── Components [Package]
+    ├── myBatteryController [PartUsage]
+    ├── TemperatureMonitor [RequirementUsage]
+    └── ADCInput [RequirementUsage]
+
+Relations:
+  TSC001                                   -[dependency  ]-> FSC001
+  SWS001                                   -[dependency  ]-> TSC001
+  HWS001                                   -[dependency  ]-> TSC001
+  BatteryControllerDefinition              -[satisfy     ]-> FSC001
+  BatteryControllerDefinition              -[satisfy     ]-> TSC001
+```
+
+`-f json` — a JSON object with two top-level keys:
+
+```bash
+java -jar sysmlv2-tool-fat.jar structure -f json <path or file>
+```
+
+```json
+{
+  "structure": [
+    {
+      "type": "Package",
+      "name": "ProjectRequirements",
+      "children": [
+        { "type": "RequirementDefinition", "name": "SafetyRequirement" },
+        ...
+      ]
+    }
+  ],
+  "relations": [
+    { "kind": "dependency", "from": "TSC001",  "to": "FSC001" },
+    { "kind": "satisfy",    "from": "BatteryControllerDefinition", "to": "FSC001" }
+  ]
+}
+```
+
+### Relation kinds
+
+| Keyword in SysML v2 | Kind label in output |
+|---|---|
+| `dependency` / `dependency derivation` | `dependency` |
+| `satisfy` | `satisfy` |
+| `verify` | `verify` |
+| `derive` / `DeriveReqtUsage` | `derive` |
+| `allocate` | `allocate` |
+| `:>` (feature subsetting) | `subset` |
+| `:>>` (redefinition) | `redefine` |
+
+`FeatureTyping` (the `:` type annotation) is intentionally excluded — it would produce one entry per typed feature and make the output very verbose.
+
 # Todo
 
 - Write comprehensive build instructions to build this thing

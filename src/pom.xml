@@ -7,7 +7,7 @@
     <packaging>pom</packaging>
 
   <properties>
-    <revision>1.0.0</revision>
+    <revision>1.1.0</revision>
   </properties>
 
       <!-- ══ PlantUML + CLI ════════════════════════════════════════════ -->
@@ -23,7 +23,18 @@
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
       <version>4.7.5</version>
-    </dependency> 
+    </dependency>
+    <!--
+      org.json – lightweight JSON library used by the structure command.
+      No transitive dependencies. Wrapped as an OSGi bundle by Tycho's
+      pomDependencies=wrapAsBundle and embedded in lib/json-20240303.jar
+      via the Bundle-ClassPath entry in META-INF/MANIFEST.MF.
+    -->
+    <dependency>
+      <groupId>org.json</groupId>
+      <artifactId>json</artifactId>
+      <version>20240303</version>
+    </dependency>
   </dependencies>
     <modules>
         <module>submodules/SysML-v2-Pilot-Implementation/org.omg.sysml</module>

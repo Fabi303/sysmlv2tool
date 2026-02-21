@@ -19,6 +19,7 @@ Requirements:
       Build with:    cd src && mvn compile package
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -606,6 +607,238 @@ class TestDiagramSingle(unittest.TestCase):
             len(puml_files) > 0,
             f"Expected .puml file(s) in {self.outdir} (default format should be puml)",
         )
+
+
+# ---------------------------------------------------------------------------
+
+class TestStructureCommand(unittest.TestCase):
+    """structure command — ASCII tree and JSON outline of dependency_test_model."""
+
+    # ── Help ─────────────────────────────────────────────────────────────────
+
+    def test_help_structure(self):
+        rc, out, err = run_tool("help", "structure")
+        c = combined(out, err)
+        self.assertRegex(c, r"(?i)structure|format|json",
+                         "Expected 'structure' or format options in help output")
+
+    # ── Text format (default) ────────────────────────────────────────────────
+
+    def test_text_format_exits_zero(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertEqual(rc, 0, fail_msg("structure on dep model should exit 0", rc, out, err))
+
+    def test_text_format_explicit_flag_exits_zero(self):
+        rc, out, err = run_tool("structure", "-f", "text", DEP_MODEL)
+        self.assertEqual(rc, 0, fail_msg("structure -f text should exit 0", rc, out, err))
+
+    def test_text_contains_package_names(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        c = combined(out, err)
+        self.assertIn("ProjectRequirements", c,
+                      "Expected 'ProjectRequirements' in structure text output")
+        self.assertIn("SystemModel", c,
+                      "Expected 'SystemModel' in structure text output")
+
+    def test_text_contains_requirement_names(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        c = combined(out, err)
+        for name in ("SafetyRequirement", "FSC001", "TSC001", "SWS001", "HWS001"):
+            self.assertIn(name, c,
+                          f"Expected requirement '{name}' in structure text output")
+
+    def test_text_contains_part_definition(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertIn("BatteryControllerDefinition", combined(out, err),
+                      "Expected 'BatteryControllerDefinition' in structure text output")
+
+    def test_text_shows_metatype_brackets(self):
+        """Element lines must include the metatype in square brackets, e.g. [Package]."""
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertRegex(combined(out, err), r"\[Package\]",
+                         "Expected '[Package]' metatype label in structure text output")
+
+    def test_text_shows_tree_connectors(self):
+        """Child elements must appear prefixed/indented, never at column 0.
+
+        FSC001 is always nested inside FunctionalSafetyConcept [Package], so
+        every line that contains it must start with a tree-connector prefix
+        (├──, └──, or their encoding-mangled equivalents on some platforms).
+        This check is intentionally encoding-agnostic: it asserts structural
+        indentation rather than specific Unicode codepoints.
+        """
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        lines = combined(out, err).splitlines()
+        fsc_lines = [l for l in lines if "FSC001" in l]
+        self.assertTrue(fsc_lines, "FSC001 not found in structure output at all")
+        self.assertTrue(
+            all(not l.startswith("FSC001") for l in fsc_lines),
+            "Expected every FSC001 line to be tree-indented (not starting at column 0); "
+            f"got: {fsc_lines}",
+        )
+
+    def test_text_shows_relations_section(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertIn("Relations:", combined(out, err),
+                      "Expected 'Relations:' section header in structure text output")
+
+    def test_text_shows_dependency_relations(self):
+        """dependency derivation statements must produce 'dependency' relation entries."""
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertIn("dependency", combined(out, err),
+                      "Expected 'dependency' kind in relations section")
+
+    def test_text_dependency_source_and_target(self):
+        """TSC001 -[dependency]-> FSC001 must appear (derivation from TSC001 to FSC001)."""
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        c = combined(out, err)
+        # Both endpoints must be present somewhere in the relations block
+        self.assertRegex(c, r"TSC001.*dependency|dependency.*TSC001",
+                         "Expected TSC001 to appear near 'dependency' in relations")
+        self.assertRegex(c, r"FSC001.*dependency|dependency.*FSC001|TSC001.*FSC001",
+                         "Expected FSC001 to appear as a dependency target")
+
+    def test_text_shows_satisfy_relations(self):
+        """satisfy clauses inside BatteryControllerDefinition must appear in relations."""
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertIn("satisfy", combined(out, err),
+                      "Expected 'satisfy' kind in relations section")
+
+    def test_text_satisfy_links_fsc001_and_tsc001(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        c = combined(out, err)
+        self.assertRegex(c, r"satisfy.*FSC001|FSC001.*satisfy",
+                         "Expected FSC001 to appear as a satisfy target")
+        self.assertRegex(c, r"satisfy.*TSC001|TSC001.*satisfy",
+                         "Expected TSC001 to appear as a satisfy target")
+
+    def test_text_no_java_exception(self):
+        rc, out, err = run_tool("structure", DEP_MODEL)
+        self.assertNotRegex(combined(out, err), r"at org\.|at java\.",
+                            "Unexpected Java stack trace in structure output")
+
+    def test_text_single_file_exits_zero(self):
+        """structure should work on a single .sysml file as well as a directory."""
+        rc, out, err = run_tool(
+            "structure", DEP_MODEL / "req" / "requirements.sysml"
+        )
+        self.assertEqual(rc, 0,
+                         fail_msg("structure on single .sysml file should exit 0", rc, out, err))
+
+    def test_text_single_file_contains_requirement_names(self):
+        rc, out, err = run_tool(
+            "structure", DEP_MODEL / "req" / "requirements.sysml"
+        )
+        c = combined(out, err)
+        self.assertIn("FSC001", c, "Expected 'FSC001' in single-file structure output")
+        self.assertIn("TSC001", c, "Expected 'TSC001' in single-file structure output")
+
+    # ── JSON format ──────────────────────────────────────────────────────────
+
+    def test_json_format_exits_zero(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        self.assertEqual(rc, 0, fail_msg("structure -f json should exit 0", rc, out, err))
+
+    def test_json_output_is_valid_json(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        try:
+            json.loads(out)
+        except json.JSONDecodeError as e:
+            self.fail(f"structure -f json produced invalid JSON: {e}\nstdout: {out[:400]}")
+
+    def test_json_has_structure_key(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertIn("structure", data, "JSON output must contain top-level 'structure' key")
+
+    def test_json_has_relations_key(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertIn("relations", data, "JSON output must contain top-level 'relations' key")
+
+    def test_json_structure_is_array(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertIsInstance(data["structure"], list,
+                              "'structure' value must be a JSON array")
+
+    def test_json_relations_is_array(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        self.assertIsInstance(data["relations"], list,
+                              "'relations' value must be a JSON array")
+
+    def test_json_structure_contains_package_names(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        text = out  # search raw JSON text for names (avoids deep traversal)
+        self.assertIn("ProjectRequirements", text,
+                      "Expected 'ProjectRequirements' in JSON structure output")
+        self.assertIn("SystemModel", text,
+                      "Expected 'SystemModel' in JSON structure output")
+
+    def test_json_structure_contains_requirement_names(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        text = out
+        for name in ("FSC001", "TSC001", "SWS001", "HWS001"):
+            self.assertIn(name, text,
+                          f"Expected '{name}' in JSON structure output")
+
+    def test_json_relations_contain_dependency_entries(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        kinds = [r.get("kind") for r in data["relations"]]
+        self.assertIn("dependency", kinds,
+                      "Expected at least one 'dependency' entry in JSON relations")
+
+    def test_json_relations_contain_satisfy_entries(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        kinds = [r.get("kind") for r in data["relations"]]
+        self.assertIn("satisfy", kinds,
+                      "Expected at least one 'satisfy' entry in JSON relations")
+
+    def test_json_relation_objects_have_required_keys(self):
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        for rel in data["relations"]:
+            for key in ("kind", "from", "to"):
+                self.assertIn(key, rel,
+                              f"Each relation object must have a '{key}' key; got: {rel}")
+
+    def test_json_dependency_relation_endpoints(self):
+        """TSC001 → FSC001 dependency must appear as a JSON relation object."""
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        deps = [r for r in data["relations"] if r.get("kind") == "dependency"]
+        froms = {r.get("from") for r in deps}
+        tos   = {r.get("to")   for r in deps}
+        self.assertIn("TSC001", froms,
+                      f"Expected 'TSC001' as dependency source; sources found: {froms}")
+        self.assertIn("FSC001", tos,
+                      f"Expected 'FSC001' as dependency target; targets found: {tos}")
+
+    def test_json_satisfy_relation_endpoints(self):
+        """BatteryControllerDefinition satisfy → FSC001/TSC001 must appear in JSON."""
+        rc, out, err = run_tool("structure", "-f", "json", DEP_MODEL)
+        data = json.loads(out)
+        satisfies = [r for r in data["relations"] if r.get("kind") == "satisfy"]
+        tos = {r.get("to") for r in satisfies}
+        self.assertTrue(
+            tos & {"FSC001", "TSC001"},
+            f"Expected FSC001 or TSC001 as satisfy target; targets found: {tos}",
+        )
+
+    # ── Error handling ────────────────────────────────────────────────────────
+
+    def test_unknown_format_rejected(self):
+        rc, out, err = run_tool("structure", "-f", "xml", DEP_MODEL)
+        self.assertNotEqual(rc, 0,
+                            "structure -f xml (unknown format) should exit non-zero")
+
+    def test_missing_path_rejected(self):
+        rc, out, err = run_tool("structure", "/nonexistent/path.sysml")
+        self.assertNotEqual(rc, 0,
+                            "structure on a non-existent path should exit non-zero")
 
 
 # ---------------------------------------------------------------------------
