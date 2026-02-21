@@ -1,3 +1,3 @@
 src/sysmlv2-tool/target/*
 src/sysmlv2-tool-assembly/target/*
-
+test/__pycache__/*
